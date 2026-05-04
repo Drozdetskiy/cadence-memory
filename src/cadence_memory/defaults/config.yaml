@@ -1,0 +1,3 @@
+# Template config.yaml — copied verbatim by `cadence-memory init`.
+# Hand-edit after init to register projects, exclude globs, defaults, etc.
+projects: []
