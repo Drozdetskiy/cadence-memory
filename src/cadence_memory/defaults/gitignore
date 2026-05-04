@@ -1,0 +1,4 @@
+# Written to .gitignore by `cadence-memory init` inside the store directory.
+*.proposed
+*.db-journal
+.cache/

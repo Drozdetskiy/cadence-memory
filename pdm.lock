@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:2e2a9f7c1ae890c62572833bdbdc1e79ee4b5e04a6762f8b91d70d82be43b5c7"
+content_hash = "sha256:5d43341178661dff15da77d6e329f638712f82bba03a98b6a65ca04db7a75ca8"
 
 [[metadata.targets]]
 requires_python = ">=3.14"
@@ -343,6 +343,19 @@ dependencies = [
 files = [
     {file = "pytest_mock-3.15.1-py3-none-any.whl", hash = "sha256:0a25e2eb88fe5168d535041d09a4529a188176ae608a6d249ee65abc0949630d"},
     {file = "pytest_mock-3.15.1.tar.gz", hash = "sha256:1849a238f6f396da19762269de72cb1814ab44416fa73a8686deac10b0d87a0f"},
+]
+
+[[package]]
+name = "python-frontmatter"
+version = "1.1.0"
+summary = "Parse and manage posts with YAML (or other) frontmatter"
+groups = ["default"]
+dependencies = [
+    "PyYAML",
+]
+files = [
+    {file = "python-frontmatter-1.1.0.tar.gz", hash = "sha256:7118d2bd56af9149625745c58c9b51fb67e8d1294a0c76796dafdc72c36e5f6d"},
+    {file = "python_frontmatter-1.1.0-py3-none-any.whl", hash = "sha256:335465556358d9d0e6c98bbeb69b1c969f2a4a21360587b9873bfc3b213407c1"},
 ]
 
 [[package]]
