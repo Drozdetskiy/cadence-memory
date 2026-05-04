@@ -1,66 +1,116 @@
-# cadence
+# cadence-memory
 
-Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop → finalize), and `cadence --review` (review-only of the current branch: review_first → review_loop → finalize, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`.
+Knowledge-base CLI that complements [cadence](https://github.com/Drozdetskiy/cadence). Stores cross-project architecture, patterns, and ephemeral task context as markdown with YAML frontmatter, indexed in SQLite (FTS5). Exposed to Claude Code via two skills (read-only `cadence-memory`, write-side `cadence-memory-discover`) that call the CLI through bash.
 
-## Package structure
+## Status
+
+Implementation in progress. The full design is stabilized in [`docs/design.md`](docs/design.md); treat it as the source of truth for behavior. Atomic implementation tasks live under `cdc-tasks/`, one `init` file per task, executed in order via cadence.
+
+## Target package structure
+
+This is the layout the implementation tasks build out (see design §16.3). Modules created by tasks 0003-0017 land here; until then the corresponding paths are empty stubs.
 
 ```
-src/cadence/
-  cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base/--config flags, SIGINT/SIGQUIT handling
-  config.py         - Config/ColorConfig dataclasses, YAML loading via PyYAML, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config); `tasks_root` (default `cdc-tasks`) is configurable in `.cadence/config.yaml`
-  status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
-  input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
+src/cadence_memory/
+  cli.py                          - Typer entrypoint; init / reindex / status / list / query / get / show / ephemeral / chat / discover
+  config.py                       - Config + AnnotationsConfig dataclasses, YAML loading, validation, ~ expansion
+  store_locator.py                - resolve_store_dir(): --store flag → CADENCE_MEMORY_DIR env → walk-up
+  ephemeral.py                    - copy/symlink/inline ephemeral docs, source_type='ephemeral'
+  documents/
+    ids.py                        - <project>:<path> | :<path> | eph:<id> build/parse/validate
+    hashes.py                     - SHA256 content_hash / frontmatter_hash / annotation_hash (canonical JSON)
+    parser.py                     - python-frontmatter wrapper → ParsedDocument(frontmatter, frontmatter_text, body, h1_title)
+    annotations.py                - merge annotations-config + frontmatter per design §6 (frontmatter wins for kind/title; tags/related set-union)
+  store/
+    schema.py                     - SQL DDL + init_schema(); WAL + foreign_keys ON
+    interface.py                  - Store Protocol + StoredDocument dataclass
+    sqlite_store.py               - SqliteStore: upsert/delete/get/list/query (FTS5 MATCH)/all_ids
+  reindex/
+    engine.py                     - reindex(): three-hash detection, INSERT/UPDATE/DELETE with metadata-only short-circuit
+    diff.py                       - dry-run variant for `status`
+  discover/
+    scanner.py                    - scan_project / scan_globals: .md walk with exclude globs (.gitignore not consulted)
+    runner.py                     - run_discover() + DiscoverInputs/DiscoverTarget; renders prompt, validates Claude output via load_annotations_config
   executor/
-    claude_executor.py - ClaudeExecutor: subprocess + JSON stream parsing, idle timeout, activity callbacks
-    process_group.py   - ProcessGroupCleanup: SIGTERM/SIGKILL process group management
-    events.py          - Typed Claude stream event dataclasses (AssistantEvent, ContentBlockDeltaEvent, ResultEvent) + parse_event()
-  git/
-    __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
-    backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
-    service.py      - Service: high-level git ops (branch creation for plan (no plan commit), commit trailer, rename plan in-place with -completed suffix)
-  plan/
-    __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
-    parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox
-    plan.py         - Selector (numbered picker + find_recent), extract_branch_name
-  processor/
-    signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED, REVIEW_DONE) + is_* helpers
-    prompts.py      - Prompt loading with local override fallback; build_plan_prompt, build_task_prompt, build_review_first_prompt, build_review_second_prompt, build_finalize_prompt; expand_agent_references / format_agent_expansion / replace_prompt_variables
-    agents.py       - Agent loader (local .cadence/agents/<name>.txt → embedded cadence.defaults.agents); AgentDef, frontmatter parser, model normalization
-    runner.py       - Runner: orchestrates plan creation, task execution, review (run_claude_review + run_claude_review_loop), and finalize phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch
-  progress/
-    colors.py       - Rich Style mapping from ColorConfig
-    flock.py        - File locking via fcntl.flock
-    logger.py       - Dual file+stdout logger with timestamps and signal highlighting; resolves the progress path per mode (`progress-plan.txt`/`progress-task.txt` next to the plan file for plan/full; `<tasks_root>/<branch-or-head-hash>/progress-review.txt` for review)
+    events.py                     - Typed Claude stream-json events + parse_event() (verbatim copy from cadence; keep in sync upstream)
+    process_group.py              - ProcessGroupCleanup: SIGTERM/SIGKILL process group cleanup (verbatim copy from cadence)
+    claude_executor.py            - StreamingClaudeRunner: subprocess + stream-json parsing + idle watchdog + filter_env (trimmed cadence executor; no signals, no error/limit patterns)
+  formatters/
+    json_format.py                - --format json
+    table_format.py               - --format table (no rich dependency; manual columns + textwrap)
   defaults/
-    prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt, finalize.txt)
-    agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt) referenced from review prompts via {{agent:<name>}} markers
+    config.yaml                   - template for `init`
+    annotations-config.yaml       - empty `documents: []` template for `init`
+    gitignore                     - written to .gitignore by `init`
+    prompts/
+      discover.txt                - embedded discover prompt (string.Template; placeholders: store_dir, output_path, projects_block)
+    skills/
+      cadence-memory.md           - read-only query skill (used by `chat`)
+      cadence-memory-discover.md  - write-side discover skill (used by `discover`)
 ```
+
+## Two configs (design §5)
+
+- `config.yaml` — project map: `projects[].path`, `exclude` globs, optional `discover.kind_rules`, `globals`, `defaults.kind`, `commit_index`. Hand-edited only.
+- `annotations-config.yaml` — list of documents and their annotations. Generated by `discover`, also hand-editable. Single source of truth for "what gets indexed" — a file not in this list is not indexed even if it physically exists in a project.
+- `annotations-config.yaml.proposed` — `discover` writes here unless `--apply` is passed. Gitignored. Reindex never reads it.
+
+Annotation priority on conflict: **frontmatter wins** for `kind`/`title`; **merge** for `tags`/`related` (design §6).
 
 ## Key commands
 
 Run tools directly from the project venv (`source venv/bin/activate`). Do NOT use `pdm run`.
+
+For package operations (build, install, publish, dependency management) always use `pdm` — `pdm build`, `pdm add`, `pdm install`, `pdm publish`. Do NOT use raw `pip install`, `python -m build`, or other pip-based workflows; the project is configured around PDM (`pdm.lock`, `pdm-backend`).
 
 ```bash
 pytest tests/ -v                # run tests
 ruff check src/ tests/          # lint
 ruff format src/ tests/         # format
 mypy src/                       # strict type check
-cadence --version               # verify CLI
-make check                      # all of the above
+cadence-memory --version        # verify CLI
+make check                      # lint + typecheck + test
 ```
 
 ## Coding conventions
 
-- Python 3.14+, strict mypy
+- Python 3.14+, `mypy --strict`. No `Any`; all Protocol boundaries annotated.
+- **Protocol-based interfaces** for every external dependency (`Store`, `ConfigLoader`, `FrontmatterParser`, `ClaudeRunner`). Tests mock the Protocol, not the real SQLite/files/subprocess.
+- **No `rich`** — manual column/textwrap layout in formatters. Runtime deps stay at `typer`, `PyYAML`, `python-frontmatter`. `sqlite3` is stdlib.
+- Embedded defaults under `src/cadence_memory/defaults/` are read via `importlib.resources` — never hard-coded paths.
+- Dataclasses: `@dataclass(frozen=True, slots=True)` for configs and DTOs.
+- No global mutable state; everything passed as parameters.
+- `.gitignore` of project repos is **not** consulted by `discover`/`reindex` — only explicit globs in `config.yaml`.
+
+## Testing patterns
+
+- Mock `Store` Protocol for engine/CLI tests; use a real `SqliteStore` against `tmp_path` only when the test exercises SQL behavior.
+- Mock `ClaudeRunner` Protocol everywhere — **never invoke a real `claude` subprocess in CI**. The streaming executor's tests inject a fake `subprocess.Popen` via `_launch_process(...)`.
+- `tmp_path` for everything filesystem-related: configs, stores, `.md` fixtures, ephemeral copies.
+- Typer `CliRunner` for CLI command tests.
+- For discover-CLI tests, also fake `git status --porcelain` (small injected callable) — no real git invocations.
+
+## Implementation tasks
+
+Work is sliced into atomic tasks under `cdc-tasks/` — one `init` file per task, executed in order. Each task ends with `make check` passing and is meant to fit in a single cadence run (`cadence --plan` → `--task`, or `--run --impl --squash`). High-level rationale lives in design §15.
+
+## Branch and commit flow
+
+Never commit directly on `main`. Every change — features, fixes, doc edits, version bumps — lands on a numbered feature branch named `<NNNN>-<slug>` (continuing the sequence visible in `git log`). The user pushes the branch and merges via GitHub PR. If you find yourself on `main` with edits to commit, create the branch first (`git switch -c <NNNN>-<slug>`).
 
 ## Commit messages
 
-Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line.
+Format: subject line `<branch-name>.`, then a blank line, then a body with one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. Include only the lines that apply. English. The subject + blank line + body shape is required so GitHub auto-fills the PR title from the subject and the PR description from the body.
 
-Each section is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the subject line. If a section needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+Each body line is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. If a line needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
 
-Good: `0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file / file_has_changes helpers.`
+Good:
+```
+0005-frontmatter-parser.
 
-Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: _prepare_plan_branch returns only branch name (drops needs_commit), create_branch_for_plan no longer auto-commits, ruff format applied, test_creates_branch_and_commits renamed to test_creates_branch_no_commit, ...`
+Added: parser that extracts YAML frontmatter and the document body for downstream indexing.
+```
+
+Bad (verbose, name-listing, sub-commit concat): `0005-... Added: ParsedDocument dataclass, parse_text/parse_file functions, fixtures for CRLF and bad-yaml, regex for ---/--- delimiter, ...`
 
 Author as the user — no `Co-Authored-By` trailer.
