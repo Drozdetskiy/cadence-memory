@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Callable, MutableMapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Literal
@@ -13,6 +16,7 @@ from typing import Annotated, Literal
 import typer
 
 from cadence_memory import __version__, ephemeral
+from cadence_memory import chat as _chat_module
 from cadence_memory.config import (
     AnnotationsConfig,
     Config,
@@ -416,6 +420,70 @@ def status(ctx: typer.Context) -> None:
         store.close()
 
     typer.echo(_format_summary(result, dry_run=True))
+
+
+def _chat_install_hint() -> str:
+    py = shlex.quote(sys.executable)
+    return (
+        "note: install the skill once with:\n"
+        "  mkdir -p ~/.claude/skills/cadence-memory\n"
+        f'  cp $({py} -c "from importlib.resources import files; '
+        "print(files('cadence_memory.defaults.skills') / 'cadence-memory.md')\") "
+        "~/.claude/skills/cadence-memory/SKILL.md"
+    )
+
+
+_chat_spawn: Callable[[Sequence[str], MutableMapping[str, str]], int] = _chat_module._default_spawn
+_chat_which: Callable[[str], str | None] = shutil.which
+
+
+def _chat_run(
+    *,
+    store_dir: Path,
+    extra_args: Sequence[str],
+    env: MutableMapping[str, str],
+) -> int:
+    return _chat_module.run_chat(
+        store_dir=store_dir,
+        extra_args=extra_args,
+        env=env,
+        spawn=_chat_spawn,
+        which=_chat_which,
+    )
+
+
+@app.command()
+def chat(
+    ctx: typer.Context,
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(
+            metavar="[-- claude args]",
+            help="Optional trailing arguments forwarded verbatim to `claude`.",
+        ),
+    ] = None,
+) -> None:
+    """Spawn an interactive Claude session pointed at the cadence-memory store."""
+    flag = ctx.obj.get("store") if ctx.obj else None
+    try:
+        store_dir = resolve_store_dir(flag=flag, env=os.environ, cwd=Path.cwd())
+    except StoreNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"chat: store={store_dir}")
+
+    skill_path = Path.home() / ".claude" / "skills" / "cadence-memory" / "SKILL.md"
+    if not skill_path.exists():
+        typer.echo("")
+        typer.echo(_chat_install_hint())
+
+    rc = _chat_run(
+        store_dir=store_dir,
+        extra_args=tuple(args or ()),
+        env=os.environ.copy(),
+    )
+    raise typer.Exit(code=rc)
 
 
 def _parse_tags(raw: str | None) -> tuple[str, ...]:
