@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+import sys
 from importlib import resources
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
@@ -19,6 +20,7 @@ from cadence_memory.config import (
     load_annotations_config,
     load_config,
 )
+from cadence_memory.formatters import Format, format_document, format_documents
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
 from cadence_memory.reindex.engine import reindex as run_reindex
@@ -228,6 +230,165 @@ def reindex(
     if verbose:
         _print_verbose(result)
     typer.echo(_format_summary(result, dry_run=False))
+
+
+def _resolve_format(flag: Format | None) -> Format:
+    if flag is not None:
+        return flag
+    return "table" if sys.stdout.isatty() else "json"
+
+
+@app.command(name="list")
+def list_(
+    ctx: typer.Context,
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Filter by document kind."),
+    ] = None,
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="Filter by project name."),
+    ] = None,
+    source_type: Annotated[
+        Literal["project", "global", "ephemeral"] | None,
+        typer.Option(
+            "--source-type",
+            help="Filter by source_type (project, global, ephemeral).",
+        ),
+    ] = None,
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """List indexed documents, optionally filtered by kind/project/source-type."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            docs = store.list(kind=kind, project=project, source_type=source_type)
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    fmt = _resolve_format(format)
+    typer.echo(format_documents(docs, format=fmt, include_body=False))
+
+
+@app.command()
+def query(
+    ctx: typer.Context,
+    text: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "FTS5 MATCH expression. Passed verbatim to SQLite FTS5 — "
+                "supports phrase, prefix (foo*), and boolean operators "
+                "(AND/OR/NOT). Quoting/escaping is the caller's responsibility."
+            ),
+        ),
+    ],
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Filter by document kind."),
+    ] = None,
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="Filter by project name."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum number of results."),
+    ] = 20,
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """Full-text search over indexed documents via SQLite FTS5."""
+    if limit < 1:
+        typer.echo("error: --limit must be >= 1", err=True)
+        raise typer.Exit(code=1)
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            docs = store.query(text, kind=kind, project=project, limit=limit)
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    fmt = _resolve_format(format)
+    typer.echo(format_documents(docs, format=fmt, include_body=False))
+
+
+@app.command()
+def get(
+    ctx: typer.Context,
+    id: Annotated[
+        str,
+        typer.Argument(help="Document id (e.g. project:path/to/file.md)."),
+    ],
+) -> None:
+    """Print the raw markdown body of a document for piping."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            doc = store.get(id)
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    if doc is None:
+        typer.echo(f"error: document not found: {id}", err=True)
+        raise typer.Exit(code=1)
+
+    body = doc.body if doc.body.endswith("\n") else doc.body + "\n"
+    typer.echo(body, nl=False)
+
+
+@app.command()
+def show(
+    ctx: typer.Context,
+    id: Annotated[
+        str,
+        typer.Argument(help="Document id (e.g. project:path/to/file.md)."),
+    ],
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """Render a document with metadata and body."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            doc = store.get(id)
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    if doc is None:
+        typer.echo(f"error: document not found: {id}", err=True)
+        raise typer.Exit(code=1)
+
+    fmt = _resolve_format(format)
+    typer.echo(format_document(doc, format=fmt, include_body=True))
 
 
 @app.command()
