@@ -314,9 +314,7 @@ def test_ephemeral_add_invalid_id_errors(tmp_path: Path) -> None:
 def test_ephemeral_remove_rejects_non_ephemeral_id(tmp_path: Path) -> None:
     store_dir, _ = _make_seeded_store(tmp_path)
 
-    result = runner.invoke(
-        app, ["--store", str(store_dir), "ephemeral", "remove", "proj:alpha.md"]
-    )
+    result = runner.invoke(app, ["--store", str(store_dir), "ephemeral", "remove", "proj:alpha.md"])
 
     assert result.exit_code == 1, result.output
     assert "not an ephemeral document id" in result.output
