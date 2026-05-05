@@ -24,7 +24,21 @@ from cadence_memory.config import (
     load_annotations_config,
     load_config,
 )
+from cadence_memory.discover.runner import (
+    DiscoverFailed,
+    DiscoverInputs,
+    DiscoverInvalidOutput,
+    DiscoverTarget,
+    DiscoverTimedOut,
+    run_discover,
+)
+from cadence_memory.discover.scanner import scan_project
 from cadence_memory.ephemeral import EphemeralAddOptions, EphemeralExists
+from cadence_memory.executor.claude_executor import (
+    ClaudeNotFound,
+    ClaudeRunner,
+    StreamingClaudeRunner,
+)
 from cadence_memory.formatters import Format, format_document, format_documents
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
@@ -484,6 +498,161 @@ def chat(
         env=os.environ.copy(),
     )
     raise typer.Exit(code=rc)
+
+
+def _default_discover_runner_factory(idle_timeout: float) -> ClaudeRunner:
+    return StreamingClaudeRunner(
+        idle_timeout=idle_timeout,
+        output_handler=lambda chunk: typer.echo(chunk, nl=False, err=True),
+        activity_handler=lambda tool: typer.echo(f"  -> {tool}", err=True),
+    )
+
+
+def _default_discover_run(inputs: DiscoverInputs, runner: ClaudeRunner) -> None:
+    run_discover(inputs, runner=runner)
+
+
+def _default_git_dirty_check(store_dir: Path, filename: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--", filename],
+            cwd=str(store_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    return bool(result.stdout.strip())
+
+
+_discover_runner_factory: Callable[[float], ClaudeRunner] = _default_discover_runner_factory
+_discover_run_func: Callable[[DiscoverInputs, ClaudeRunner], None] = _default_discover_run
+_git_dirty_check: Callable[[Path, str], bool] = _default_git_dirty_check
+
+
+@app.command()
+def discover(
+    ctx: typer.Context,
+    project: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--project",
+            help="Limit discovery to the named project. Repeat to target multiple projects.",
+        ),
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help=(
+                "Overwrite annotations-config.yaml directly. "
+                "Without this flag, output goes to annotations-config.yaml.proposed for review."
+            ),
+        ),
+    ] = False,
+    idle_timeout: Annotated[
+        float,
+        typer.Option(
+            "--idle-timeout",
+            help="Seconds without Claude output before aborting; 0 disables the watchdog.",
+        ),
+    ] = 300.0,
+) -> None:
+    """Run Claude to populate annotations-config.yaml from project markdown files."""
+    flag = ctx.obj.get("store") if ctx.obj else None
+    try:
+        store_dir = resolve_store_dir(flag=flag, env=os.environ, cwd=Path.cwd())
+    except StoreNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        cfg = load_config(store_dir / "config.yaml")
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    selected_names = list(project or [])
+    if selected_names:
+        known_by_name = {p.name: p for p in cfg.projects}
+        for name in selected_names:
+            if name not in known_by_name:
+                typer.echo(f"error: unknown project: {name}", err=True)
+                known = ", ".join(p.name for p in cfg.projects)
+                typer.echo(f"known projects: {known}", err=True)
+                raise typer.Exit(code=1)
+        selected_projects = tuple(known_by_name[name] for name in selected_names)
+    else:
+        selected_projects = cfg.projects
+
+    if not selected_projects:
+        typer.echo("error: no projects configured", err=True)
+        raise typer.Exit(code=1)
+
+    targets = tuple(
+        DiscoverTarget(project=p, files=tuple(scan_project(p))) for p in selected_projects
+    )
+
+    if apply:
+        output_path = store_dir / "annotations-config.yaml"
+        if _git_dirty_check(store_dir, "annotations-config.yaml"):
+            typer.echo(
+                (
+                    "error: annotations-config.yaml has uncommitted changes; "
+                    "commit or stash before re-running with --apply"
+                ),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    else:
+        output_path = store_dir / "annotations-config.yaml.proposed"
+        if output_path.exists():
+            typer.echo(
+                "warn: overwriting existing annotations-config.yaml.proposed",
+                err=True,
+            )
+
+    n_projects = len(targets)
+    n_files = sum(len(t.files) for t in targets)
+    typer.echo(
+        f"discover: {n_projects} project(s), {n_files} file(s) -> {output_path}",
+        err=True,
+    )
+
+    runner = _discover_runner_factory(idle_timeout)
+    inputs = DiscoverInputs(
+        store_dir=store_dir,
+        targets=targets,
+        output_path=output_path,
+    )
+
+    try:
+        _discover_run_func(inputs, runner)
+    except DiscoverTimedOut:
+        typer.echo("discover failed: idle timeout", err=True)
+        raise typer.Exit(code=4) from None
+    except DiscoverFailed as exc:
+        typer.echo(f"discover failed: claude exited with code {exc.exit_code}", err=True)
+        raise typer.Exit(code=2) from None
+    except DiscoverInvalidOutput as exc:
+        typer.echo(
+            f"discover failed: invalid output at {exc.path}: {exc.message}",
+            err=True,
+        )
+        raise typer.Exit(code=3) from None
+    except ClaudeNotFound:
+        typer.echo("discover failed: claude not found on PATH", err=True)
+        raise typer.Exit(code=127) from None
+
+    typer.echo(f"wrote: {output_path}")
+    if not apply:
+        typer.echo("next: review the diff, then re-run with --apply")
 
 
 def _parse_tags(raw: str | None) -> tuple[str, ...]:
