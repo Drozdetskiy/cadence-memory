@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -679,3 +680,51 @@ def test_load_config_globals_partial_overrides_keep_other_default(tmp_path: Path
     cfg = load_config(config_path)
     assert cfg.globals.include == ("docs/**/*.md",)
     assert cfg.globals.exclude == ("ephemeral/**", "annotations-config.yaml*")
+
+
+# --------------------------------------------------------------------------- #
+# Embedded default templates copied by `cadence-memory init`                  #
+# --------------------------------------------------------------------------- #
+
+
+def _write_default(name: str, dst: Path) -> Path:
+    text = resources.files("cadence_memory.defaults").joinpath(name).read_text(encoding="utf-8")
+    dst.write_text(text, encoding="utf-8")
+    return dst
+
+
+def test_default_config_template_loads(tmp_path: Path) -> None:
+    config_path = _write_default("config.yaml", tmp_path / "config.yaml")
+    cfg = load_config(config_path)
+
+    assert cfg.projects == ()
+    assert cfg.globals == GlobalsConfig(
+        include=("**/*.md",),
+        exclude=("ephemeral/**", "annotations-config.yaml*"),
+    )
+    assert cfg.defaults == Defaults(kind="doc")
+    assert cfg.commit_index is False
+
+
+def test_default_annotations_template_loads(tmp_path: Path) -> None:
+    annotations_path = _write_default(
+        "annotations-config.yaml", tmp_path / "annotations-config.yaml"
+    )
+    cfg = load_annotations_config(annotations_path)
+    assert cfg == AnnotationsConfig(documents=())
+
+
+def test_default_gitignore_matches_design() -> None:
+    text = (
+        resources.files("cadence_memory.defaults").joinpath("gitignore").read_text(encoding="utf-8")
+    )
+    entries = [line for line in text.splitlines() if line and not line.startswith("#")]
+    assert entries == [
+        "index.sqlite",
+        "index.sqlite-journal",
+        "index.sqlite-wal",
+        "index.sqlite-shm",
+        "annotations-config.yaml.proposed",
+        "ephemeral/",
+        "*.tmp",
+    ]
