@@ -1,1 +1,42 @@
 """JSON output formatter for `--format json`."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from cadence_memory.store.interface import StoredDocument
+
+__all__ = ["format_document", "format_documents"]
+
+
+def _doc_to_dict(doc: StoredDocument, *, include_body: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": doc.id,
+        "source_type": doc.source_type,
+        "project": doc.project,
+        "abs_path": doc.abs_path,
+        "rel_path": doc.rel_path,
+        "kind": doc.kind,
+        "title": doc.title,
+        "tags": list(doc.tags),
+        "related": list(doc.related),
+        "content_hash": doc.content_hash,
+        "frontmatter_hash": doc.frontmatter_hash,
+        "annotation_hash": doc.annotation_hash,
+        "mtime": doc.mtime,
+        "indexed_at": doc.indexed_at,
+    }
+    if include_body:
+        payload["body"] = doc.body
+    return payload
+
+
+def format_documents(docs: list[StoredDocument], *, include_body: bool) -> str:
+    payload = [_doc_to_dict(doc, include_body=include_body) for doc in docs]
+    return json.dumps(payload, indent=2, sort_keys=False, ensure_ascii=False)
+
+
+def format_document(doc: StoredDocument, *, include_body: bool) -> str:
+    payload = _doc_to_dict(doc, include_body=include_body)
+    return json.dumps(payload, indent=2, sort_keys=False, ensure_ascii=False)
