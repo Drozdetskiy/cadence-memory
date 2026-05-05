@@ -49,6 +49,8 @@ def _validate_ephemeral_name(name: str) -> None:
         raise ValueError(f"invalid ephemeral name {name!r}: must not contain ':'")
     if "/" in name:
         raise ValueError(f"invalid ephemeral name {name!r}: must not contain '/'")
+    if "\\" in name:
+        raise ValueError(f"invalid ephemeral name {name!r}: must not contain backslash")
 
 
 def build_project_id(project: str, rel_path: str) -> str:

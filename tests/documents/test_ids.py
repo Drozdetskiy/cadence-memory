@@ -130,6 +130,11 @@ def test_ephemeral_name_rejects_slash() -> None:
         build_ephemeral_id("bad/name")
 
 
+def test_ephemeral_name_rejects_backslash() -> None:
+    with pytest.raises(ValueError, match="backslash"):
+        build_ephemeral_id("..\\evil")
+
+
 def test_parse_rejects_double_colon_in_project_id() -> None:
     with pytest.raises(ValueError, match="must not contain ':'"):
         parse("project::path.md")

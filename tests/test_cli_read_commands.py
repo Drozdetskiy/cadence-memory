@@ -358,9 +358,7 @@ def test_get_appends_trailing_newline_when_missing(tmp_path: Path) -> None:
 
     _write(project_dir / "no-trailing.md", "# NoTrail\n\nbody-without-newline-at-end")
 
-    config_yaml = (
-        f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
-    )
+    config_yaml = f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
     (store_dir / "annotations-config.yaml").write_text(
         "documents:\n"

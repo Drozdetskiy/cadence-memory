@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 import typer
 
-from cadence_memory import __version__
+from cadence_memory import __version__, ephemeral
 from cadence_memory.config import (
     AnnotationsConfig,
     Config,
@@ -20,6 +20,7 @@ from cadence_memory.config import (
     load_annotations_config,
     load_config,
 )
+from cadence_memory.ephemeral import EphemeralAddOptions, EphemeralExists
 from cadence_memory.formatters import Format, format_document, format_documents
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
@@ -28,6 +29,11 @@ from cadence_memory.store.sqlite_store import SqliteStore
 from cadence_memory.store_locator import StoreNotFoundError, resolve_store_dir
 
 app = typer.Typer(add_completion=False)
+ephemeral_app = typer.Typer(
+    add_completion=False,
+    help="Manage ephemeral task notes stored under <store>/ephemeral/.",
+)
+app.add_typer(ephemeral_app, name="ephemeral")
 
 _DEFAULT_FILES: tuple[tuple[str, str], ...] = (
     ("config.yaml", "config.yaml"),
@@ -410,3 +416,178 @@ def status(ctx: typer.Context) -> None:
         store.close()
 
     typer.echo(_format_summary(result, dry_run=True))
+
+
+def _parse_tags(raw: str | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    return tuple(tag.strip() for tag in raw.split(",") if tag.strip())
+
+
+@ephemeral_app.command("add")
+def ephemeral_add(
+    ctx: typer.Context,
+    path: Annotated[
+        Path | None,
+        typer.Argument(
+            help="Source markdown file to copy or symlink. Omit when --inline - is used.",
+        ),
+    ] = None,
+    eph_id: Annotated[
+        str | None,
+        typer.Option(
+            "--id",
+            help="Explicit ephemeral name (slug under 'eph:'). Required for --inline -.",
+        ),
+    ] = None,
+    kind: Annotated[
+        str,
+        typer.Option("--kind", help="Document kind annotation."),
+    ] = "task",
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="Override the document title."),
+    ] = None,
+    tags: Annotated[
+        str | None,
+        typer.Option("--tags", help="Comma-separated list of tags."),
+    ] = None,
+    symlink: Annotated[
+        bool,
+        typer.Option("--symlink/--no-symlink", help="Symlink the source instead of copying it."),
+    ] = False,
+    inline: Annotated[
+        str | None,
+        typer.Option(
+            "--inline",
+            help="Read the document body from stdin. Only legal value: '-'.",
+        ),
+    ] = None,
+) -> None:
+    """Add an ephemeral document by copying, symlinking, or reading stdin."""
+    if inline is not None and inline != "-":
+        raise typer.BadParameter("only '-' is supported (read from stdin)", param_hint="--inline")
+
+    inline_text: str | None = None
+    source_path: Path | None = None
+    if inline == "-":
+        if eph_id is None:
+            typer.echo("error: --inline - requires --id", err=True)
+            raise typer.Exit(code=1)
+        if path is not None:
+            typer.echo("error: cannot combine --inline - with a positional path", err=True)
+            raise typer.Exit(code=1)
+        inline_text = sys.stdin.read()
+    else:
+        if path is None:
+            typer.echo(
+                "error: a source file argument is required unless --inline - is used",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        source_path = path
+
+    opts = EphemeralAddOptions(
+        source=source_path,
+        eph_id=eph_id,
+        kind=kind,
+        title=title,
+        tags=_parse_tags(tags),
+        use_symlink=symlink,
+        inline_text=inline_text,
+    )
+
+    store_dir, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            doc = ephemeral.add(opts, store=store, store_dir=store_dir)
+        except EphemeralExists as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except (OSError, sqlite3.Error) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    typer.echo(doc.id)
+
+
+@ephemeral_app.command("list")
+def ephemeral_list(
+    ctx: typer.Context,
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """List ephemeral documents."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            docs = ephemeral.list_(store)
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    fmt = _resolve_format(format)
+    typer.echo(format_documents(docs, format=fmt, include_body=False))
+
+
+@ephemeral_app.command("remove")
+def ephemeral_remove(
+    ctx: typer.Context,
+    id: Annotated[
+        str,
+        typer.Argument(help="Ephemeral document id (e.g. 'eph:mynote')."),
+    ],
+) -> None:
+    """Remove a single ephemeral document by id."""
+    store_dir, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            ephemeral.remove(id, store=store, store_dir=store_dir)
+        except ValueError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except (OSError, sqlite3.Error) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    typer.echo(f"removed: {id}")
+
+
+@ephemeral_app.command("clear")
+def ephemeral_clear(
+    ctx: typer.Context,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the interactive confirmation prompt."),
+    ] = False,
+) -> None:
+    """Remove all ephemeral documents (rows and on-disk files)."""
+    if not yes and not typer.confirm("Remove all ephemeral documents?", default=False):
+        typer.echo("aborted")
+        raise typer.Exit(code=1)
+
+    store_dir, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            count = ephemeral.clear(store=store, store_dir=store_dir)
+        except (OSError, sqlite3.Error) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    typer.echo(f"cleared: {count} document(s)")
