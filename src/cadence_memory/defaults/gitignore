@@ -1,4 +1,7 @@
-# Written to .gitignore by `cadence-memory init` inside the store directory.
-*.proposed
-*.db-journal
-.cache/
+index.sqlite
+index.sqlite-journal
+index.sqlite-wal
+index.sqlite-shm
+annotations-config.yaml.proposed
+ephemeral/
+*.tmp

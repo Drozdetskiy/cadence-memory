@@ -1,3 +1,50 @@
-# Template config.yaml — copied verbatim by `cadence-memory init`.
-# Hand-edit after init to register projects, exclude globs, defaults, etc.
+# cadence-memory project map.
+#
+# Hand-edited only. Lists the projects to scan, what to exclude inside them,
+# and (optionally) discover rules. The list of indexed documents lives in
+# annotations-config.yaml — this file just maps project names to paths.
+#
+# Full reference: docs/design.md §5.1.
+
+# Project roots. Each project needs a unique `name` (matching ^[a-z0-9_-]+$)
+# and a `path`; everything else is optional. Replace this empty list with
+# entries for your projects, e.g.:
+#
+# projects:
+#   - name: billing
+#     path: ~/code/billing
+#     exclude:
+#       - "node_modules/**"
+#       - ".venv/**"
+#       - "**/test_*.md"
+#     # Optional rules consumed by `cadence-memory discover`. Files matching a
+#     # pattern get the listed `kind` without the skill having to guess.
+#     discover:
+#       kind_rules:
+#         - pattern: "README.md"
+#           kind: service
+#         - pattern: "docs/adr/*.md"
+#           kind: adr
+#
+#   - name: orders
+#     path: ~/code/orders
+#     exclude: ["node_modules/**", ".venv/**"]
 projects: []
+
+# Shared documents living inside this cadence-memory directory itself
+# (e.g. workflows/, glossary.md). Defaults are sensible — uncomment to override.
+#
+# globals:
+#   include: ["**/*.md"]
+#   exclude: ["ephemeral/**", "annotations-config.yaml*"]
+
+# Defaults applied when neither annotations-config.yaml nor frontmatter sets
+# the field. Only `kind` is configurable today.
+defaults:
+  kind: doc
+
+# Whether to commit the SQLite index alongside the markdown sources. Default
+# is false (index.sqlite is gitignored). Flip to true if you want to share a
+# prebuilt index between machines.
+#
+# commit_index: false

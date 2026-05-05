@@ -81,7 +81,10 @@ def test_default_yaml_templates_parse() -> None:
     root = importlib.resources.files("cadence_memory.defaults")
     config_text = root.joinpath("config.yaml").read_text(encoding="utf-8")
     annotations_text = root.joinpath("annotations-config.yaml").read_text(encoding="utf-8")
-    assert yaml.safe_load(config_text) == {"projects": []}
+    assert yaml.safe_load(config_text) == {
+        "projects": [],
+        "defaults": {"kind": "doc"},
+    }
     assert yaml.safe_load(annotations_text) == {"documents": []}
 
 
