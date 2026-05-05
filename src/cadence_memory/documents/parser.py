@@ -48,8 +48,7 @@ def parse_text(text: str) -> ParsedDocument:
         body = text[match.end() :]
     elif metadata:
         raise ValueError(
-            "frontmatter parsed but the opening '---' fence is not at the "
-            "start of the input"
+            "frontmatter parsed but the opening '---' fence is not at the start of the input"
         )
     else:
         frontmatter_text = ""
