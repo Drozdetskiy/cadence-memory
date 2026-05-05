@@ -114,3 +114,38 @@ Added: parser that extracts YAML frontmatter and the document body for downstrea
 Bad (verbose, name-listing, sub-commit concat): `0005-... Added: ParsedDocument dataclass, parse_text/parse_file functions, fixtures for CRLF and bad-yaml, regex for ---/--- delimiter, ...`
 
 Author as the user — no `Co-Authored-By` trailer.
+
+## Releasing a new version
+
+The package is published as `cadence-memory` on PyPI; the Homebrew formula lives in [Drozdetskiy/homebrew-cadence](https://github.com/Drozdetskiy/homebrew-cadence) alongside the `cadence` formula and exposes the CLI as `cadence-memory`.
+
+1. **Add a CHANGELOG.md entry** for the new version using the existing format (`## vX.Y.Z - YYYY-MM-DD`, then sections like New Features / Fixes / Other). Focus on user-visible changes since the previous tag — new commands, flags, behavior changes, fixes — not internal refactors.
+2. **Bump version** in `src/cadence_memory/__init__.py` on a `<NNNN>-<slug>` branch (same branch as the changelog entry); merge to `main` via PR.
+3. **Build and publish to PyPI**:
+   ```bash
+   rm -rf dist/ && pdm build
+   python3 - <<'PY'
+   import configparser, os, subprocess
+   c = configparser.ConfigParser(); c.read(os.path.expanduser("~/.pypirc"))
+   env = {**os.environ, "PDM_PUBLISH_USERNAME": "__token__", "PDM_PUBLISH_PASSWORD": c["pypi"]["password"]}
+   subprocess.run(["pdm", "publish", "--repository", "pypi", "--no-build"], env=env, check=True)
+   PY
+   ```
+   `--no-build` ensures the artifact whose `sha256` you'll paste into the formula is byte-identical to what PyPI serves.
+4. **Tag and create a GitHub Release**:
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+   Then write release notes at https://github.com/Drozdetskiy/cadence-memory/releases/new (the CHANGELOG.md entry is a good starting point; focus on user-visible changes).
+5. **Update the Homebrew formula** in `homebrew-cadence/Formula/cadence-memory.rb`:
+   - Replace `url` and `sha256` with the new sdist values from `https://pypi.org/pypi/cadence-memory/X.Y.Z/json` (look for the entry where `packagetype == "sdist"`).
+   - **Only if `pyproject.toml` dependencies changed**, regenerate the `resource` blocks. `brew update-python-resources` cannot see packages newer than its internal PyPI snapshot, so resolve manually:
+     ```bash
+     python3.14 -m venv /tmp/r && /tmp/r/bin/pip install --dry-run --report /tmp/r.json cadence-memory==X.Y.Z
+     ```
+     Then for each resolved dependency fetch the sdist URL/sha256 from `https://pypi.org/pypi/<name>/<version>/json` and write the `resource "<name>" do … end` block.
+   - Verify locally: `brew audit --strict drozdetskiy/cadence/cadence-memory && brew install --build-from-source drozdetskiy/cadence/cadence-memory && brew test drozdetskiy/cadence/cadence-memory`.
+   - Commit, push.
+6. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install drozdetskiy/cadence/cadence-memory && cadence-memory --version`. Use the fully tap-qualified name (`drozdetskiy/cadence/cadence-memory`) so the install resolves to this tap unambiguously.
+
+PyPI versions are immutable (no re-uploads under the same `X.Y.Z`); if anything goes wrong after step 3, bump the patch version and start again.
