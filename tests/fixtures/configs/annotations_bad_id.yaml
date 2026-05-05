@@ -1,0 +1,3 @@
+documents:
+  - id: ":foo/../bar.md"
+    path: foo/../bar.md
