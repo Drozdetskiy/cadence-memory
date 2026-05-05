@@ -100,15 +100,20 @@ Never commit directly on `main`. Every change — features, fixes, doc edits, ve
 
 ## Commit messages
 
-Format: subject line `<branch-name>.`, then a blank line, then a body with one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. Include only the lines that apply. English. The subject + blank line + body shape is required so GitHub auto-fills the PR title from the subject and the PR description from the body.
+Format: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>` is `Added`, `Changed`, or `Deleted`. English. No blank line, no multi-line body — the whole commit message is one line. The PR title will carry that line verbatim; expand on details in the PR description if needed.
 
-Each body line is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. If a line needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+A single commit can carry any combination of `Added`, `Changed`, and `Deleted` clauses, separated by `. ` (period + space). Within one clause, list multiple items separated by `; ` (semicolon + space). Always include only the clauses that apply.
 
-Good:
+Each item is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+
+Good (single clause):
 ```
-0005-frontmatter-parser.
+0005-frontmatter-parser. Added: parser that extracts YAML frontmatter and the document body for downstream indexing.
+```
 
-Added: parser that extracts YAML frontmatter and the document body for downstream indexing.
+Good (multiple clauses, multiple items):
+```
+0012-discover-rerun. Added: --apply flag for discover; kind_rules support in config. Changed: discover writes proposed annotations to a sidecar file by default. Deleted: legacy --auto-apply alias.
 ```
 
 Bad (verbose, name-listing, sub-commit concat): `0005-... Added: ParsedDocument dataclass, parse_text/parse_file functions, fixtures for CRLF and bad-yaml, regex for ---/--- delimiter, ...`
@@ -136,7 +141,7 @@ The package is published as `cadence-memory` on PyPI; the Homebrew formula lives
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   Then write release notes at https://github.com/Drozdetskiy/cadence-memory/releases/new (the CHANGELOG.md entry is a good starting point; focus on user-visible changes).
+   Then hand the user the prefilled URL `https://github.com/Drozdetskiy/cadence-memory/releases/new?tag=vX.Y.Z`, the title (`vX.Y.Z`), and the release body (the corresponding CHANGELOG.md section, copy-paste ready) — the user publishes the GitHub Release themselves via the web UI. Do NOT run `gh release create`.
 5. **Update the Homebrew formula** in `homebrew-cadence/Formula/cadence-memory.rb`:
    - Replace `url` and `sha256` with the new sdist values from `https://pypi.org/pypi/cadence-memory/X.Y.Z/json` (look for the entry where `packagetype == "sdist"`).
    - **Only if `pyproject.toml` dependencies changed**, regenerate the `resource` blocks. `brew update-python-resources` cannot see packages newer than its internal PyPI snapshot, so resolve manually:
