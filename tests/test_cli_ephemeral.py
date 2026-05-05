@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -10,6 +11,12 @@ from typer.testing import CliRunner
 from cadence_memory.cli import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _write(path: Path, content: str) -> None:
@@ -260,7 +267,7 @@ def test_ephemeral_add_inline_invalid_value(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
-    assert "--inline" in result.output
+    assert "--inline" in _strip_ansi(result.output)
 
 
 def test_ephemeral_add_path_with_inline_errors(tmp_path: Path) -> None:
