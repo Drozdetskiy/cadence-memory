@@ -1,0 +1,8 @@
+documents:
+  - id: billing:README.md
+    project: billing
+    path: README.md
+
+  - id: "billing:./README.md"
+    project: billing
+    path: "./README.md"
