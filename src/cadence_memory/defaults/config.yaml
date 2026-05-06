@@ -14,9 +14,30 @@
 #   - name: billing
 #     path: ~/code/billing
 #     exclude:
-#       - "node_modules/**"
-#       - ".venv/**"
-#       - "**/test_*.md"
+#       # Python virtual envs / installed packages
+#       - "**/.venv/**"
+#       - "**/venv/**"
+#       - "**/env/**"
+#       - "**/.pip_packages/**"
+#       - "**/site-packages/**"
+#       # Python caches
+#       - "**/__pycache__/**"
+#       - "**/.pytest_cache/**"
+#       - "**/.mypy_cache/**"
+#       - "**/.ruff_cache/**"
+#       - "**/.tox/**"
+#       - "**/.nox/**"
+#       # Coverage / test artefacts
+#       - "**/htmlcov/**"
+#       - "**/.coverage"
+#       - "**/coverage.xml"
+#       # Build artefacts
+#       - "**/dist/**"
+#       - "**/build/**"
+#       - "**/*.egg-info/**"
+#       # VCS / generic
+#       - "**/.git/**"
+#       - "**/node_modules/**"
 #     # Optional rules consumed by `cadence-memory discover`. Files matching a
 #     # pattern get the listed `kind` without the skill having to guess.
 #     discover:
@@ -28,7 +49,7 @@
 #
 #   - name: orders
 #     path: ~/code/orders
-#     exclude: ["node_modules/**", ".venv/**"]
+#     # See the recommended exclude list above.
 projects: []
 
 # Shared documents living inside this cadence-memory directory itself
