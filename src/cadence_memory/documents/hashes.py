@@ -12,6 +12,10 @@ def content_hash(body: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def chunk_content_hash(slug: str, body: str) -> str:
+    return hashlib.sha256((slug + "\n" + body).encode("utf-8")).hexdigest()
+
+
 def frontmatter_hash(frontmatter_text: str) -> str:
     return hashlib.sha256(frontmatter_text.encode("utf-8")).hexdigest()
 

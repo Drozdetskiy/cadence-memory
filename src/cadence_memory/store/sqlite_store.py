@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from cadence_memory.documents.chunker import Chunk
+from cadence_memory.documents.hashes import chunk_content_hash
 from cadence_memory.store.interface import StoredChunk, StoredDocument
 from cadence_memory.store.schema import init_schema
 
@@ -174,15 +174,13 @@ class SqliteStore:
             for chunk in chunks:
                 chunk_id = f"{document_id}#{chunk.slug}"
                 heading_path_json = json.dumps(list(chunk.heading_path), ensure_ascii=False)
-                content_hash = hashlib.sha256(
-                    (chunk.slug + "\n" + chunk.body).encode("utf-8")
-                ).hexdigest()
+                content_hash = chunk_content_hash(chunk.slug, chunk.body)
                 self._conn.execute(
                     """
                     INSERT INTO chunks (
                         id, document_id, slug, heading_path, body,
-                        chunk_order, content_hash, summary
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        chunk_order, content_hash, summary, enrichment
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chunk_id,
@@ -193,14 +191,15 @@ class SqliteStore:
                         chunk.order,
                         content_hash,
                         chunk.summary,
+                        None,
                     ),
                 )
                 heading_path_fts = " ".join(chunk.heading_path)
                 self._conn.execute(
                     """
                     INSERT INTO documents_fts (
-                        chunk_id, document_id, title, heading_path, body, tags
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        chunk_id, document_id, title, heading_path, body, enrichment, tags
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chunk_id,
@@ -208,6 +207,7 @@ class SqliteStore:
                         doc_title,
                         heading_path_fts,
                         chunk.body,
+                        "",
                         tags_blob,
                     ),
                 )
@@ -217,7 +217,7 @@ class SqliteStore:
             """
             SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
                    c.chunk_order, c.content_hash,
-                   d.title, d.kind, d.project, c.summary
+                   d.title, d.kind, d.project, c.summary, c.enrichment
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE c.document_id = ?
@@ -232,7 +232,7 @@ class SqliteStore:
             """
             SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
                    c.chunk_order, c.content_hash,
-                   d.title, d.kind, d.project, c.summary
+                   d.title, d.kind, d.project, c.summary, c.enrichment
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE c.id = ?
@@ -262,7 +262,7 @@ class SqliteStore:
         sql = (
             "SELECT c.id, c.document_id, c.slug, c.heading_path, c.body, "
             "c.chunk_order, c.content_hash, "
-            "d.title, d.kind, d.project, c.summary "
+            "d.title, d.kind, d.project, c.summary, c.enrichment "
             "FROM documents_fts "
             "JOIN chunks c ON c.id = documents_fts.chunk_id "
             "JOIN documents d ON d.id = c.document_id "
@@ -308,6 +308,47 @@ class SqliteStore:
     def discover_cache_clear(self) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM discover_cache")
+
+    def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE chunks SET enrichment = ? WHERE id = ?",
+                (enrichment_text, chunk_id),
+            )
+            self._conn.execute(
+                "UPDATE documents_fts SET enrichment = ? WHERE chunk_id = ?",
+                (enrichment_text, chunk_id),
+            )
+
+    def enrichment_cache_get(self, content_hash: str) -> dict[str, object] | None:
+        row = self._conn.execute(
+            "SELECT enrichment_json, model, generated_at FROM enrichment_cache "
+            "WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "enrichment_json": cast(str, row[0]),
+            "model": cast(str, row[1]),
+            "generated_at": cast(str, row[2]),
+        }
+
+    def enrichment_cache_put(
+        self,
+        *,
+        content_hash: str,
+        enrichment_json: str,
+        model: str,
+        generated_at: str,
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO enrichment_cache "
+                "(content_hash, enrichment_json, model, generated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (content_hash, enrichment_json, model, generated_at),
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -355,4 +396,5 @@ class SqliteStore:
             document_kind=cast(str, row[8]),
             document_project=cast("str | None", row[9]),
             summary=cast("str | None", row[10]),
+            enrichment=cast("str | None", row[11]),
         )

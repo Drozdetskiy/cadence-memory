@@ -69,3 +69,17 @@ defaults:
 # prebuilt index between machines.
 #
 # commit_index: false
+
+# Claude model used by features that call out to Claude (e.g. enrichment).
+# Individual features may override this; this is the shared default.
+claude:
+  default_model: claude-haiku-4-5
+
+# Index-time enrichment: ask Claude to generate cross-lingual keywords,
+# questions, and alternative phrasings for each chunk so FTS recall works
+# across languages. Set `enabled: false` (or pass `--no-enrichment` to
+# `reindex`) to skip the Claude calls entirely. `model: null` falls back to
+# `claude.default_model`.
+enrichment:
+  enabled: true
+  model: null

@@ -29,7 +29,11 @@ def _make_seeded_store(tmp_path: Path) -> tuple[Path, Path]:
     _write(project_dir / "beta.md", "# Beta\n\nuniqbeta body shared\n")
     _write(project_dir / "gamma.md", "# Gamma\n\nuniqgamma extra body shared\n")
 
-    config_yaml = f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
+    config_yaml = (
+        f"projects:\n  - name: proj\n    path: {project_dir}\n"
+        "defaults:\n  kind: doc\n"
+        "enrichment:\n  enabled: false\n"
+    )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
     annotations_yaml = (
@@ -424,7 +428,11 @@ def test_get_appends_trailing_newline_when_missing(tmp_path: Path) -> None:
 
     _write(project_dir / "no-trailing.md", "# NoTrail\n\nbody-without-newline-at-end")
 
-    config_yaml = f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
+    config_yaml = (
+        f"projects:\n  - name: proj\n    path: {project_dir}\n"
+        "defaults:\n  kind: doc\n"
+        "enrichment:\n  enabled: false\n"
+    )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
     (store_dir / "annotations-config.yaml").write_text(
         "documents:\n"

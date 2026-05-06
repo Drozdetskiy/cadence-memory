@@ -2,14 +2,61 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from cadence_memory import cli as cli_module
 from cadence_memory.cli import app
+from cadence_memory.enrichment.interface import Enricher, EnrichmentResult
 
 runner = CliRunner()
+
+
+@dataclass
+class _StubEnricher:
+    model: str
+    calls: list[tuple[str, tuple[str, ...], str, str | None]] = field(default_factory=list)
+
+    def enrich_chunk(
+        self,
+        *,
+        title: str,
+        heading_path: tuple[str, ...],
+        body: str,
+        summary: str | None,
+    ) -> EnrichmentResult:
+        self.calls.append((title, heading_path, body, summary))
+        return EnrichmentResult(
+            keywords=("kw",),
+            questions=(),
+            alt_phrasings=(),
+            model=self.model,
+            generated_at="2026-01-01T00:00:00+00:00",
+        )
+
+
+@dataclass
+class _FactoryRecorder:
+    models: list[str] = field(default_factory=list)
+    idle_timeouts: list[float] = field(default_factory=list)
+    enrichers: list[_StubEnricher] = field(default_factory=list)
+
+    def __call__(self, model: str, idle_timeout: float) -> Enricher:
+        self.models.append(model)
+        self.idle_timeouts.append(idle_timeout)
+        enricher = _StubEnricher(model=model)
+        self.enrichers.append(enricher)
+        return enricher
+
+
+@pytest.fixture
+def factory_recorder(monkeypatch: pytest.MonkeyPatch) -> _FactoryRecorder:
+    recorder = _FactoryRecorder()
+    monkeypatch.setattr(cli_module, "_enricher_factory", recorder)
+    return recorder
 
 
 def _write(path: Path, content: str) -> None:
@@ -36,7 +83,9 @@ def _make_store(
 
     if config_yaml is None:
         config_yaml = (
-            f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
+            f"projects:\n  - name: proj\n    path: {project_dir}\n"
+            "defaults:\n  kind: doc\n"
+            "enrichment:\n  enabled: false\n"
         )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
@@ -240,3 +289,175 @@ def test_reindex_with_bogus_store_flag_exits_one(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "error:" in result.output
     assert "not a cadence-memory store" in result.output
+
+
+def test_reindex_help_lists_enrichment_flags() -> None:
+    result = runner.invoke(app, ["reindex", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--no-enrichment" in result.output
+    assert "--enrichment-model" in result.output
+    assert "--enrichment-idle-timeout" in result.output
+
+
+def _make_store_with_enrichment(
+    tmp_path: Path,
+    *,
+    enrichment_section: str | None,
+    claude_section: str | None = None,
+) -> tuple[Path, Path]:
+    store_dir = tmp_path / "store"
+    project_dir = tmp_path / "proj"
+    store_dir.mkdir()
+    project_dir.mkdir()
+    _write(project_dir / "README.md", "# Title\n\nbody\n")
+
+    parts = [
+        f"projects:\n  - name: proj\n    path: {project_dir}\n",
+        "defaults:\n  kind: doc\n",
+    ]
+    if claude_section is not None:
+        parts.append(claude_section)
+    if enrichment_section is not None:
+        parts.append(enrichment_section)
+    (store_dir / "config.yaml").write_text("".join(parts), encoding="utf-8")
+    (store_dir / "annotations-config.yaml").write_text(
+        "documents:\n  - id: proj:README.md\n    project: proj\n    path: README.md\n",
+        encoding="utf-8",
+    )
+    return store_dir, project_dir
+
+
+def test_reindex_uses_default_model_when_no_overrides(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(tmp_path, enrichment_section=None)
+
+    result = runner.invoke(app, ["--store", str(store_dir), "reindex"])
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == ["claude-haiku-4-5"]
+    assert "enriched: 2" in result.output
+    assert "enrichment-cache-hits: 0" in result.output
+
+
+def test_reindex_uses_config_model_when_present(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(
+        tmp_path,
+        enrichment_section="enrichment:\n  model: claude-from-config\n",
+    )
+
+    result = runner.invoke(app, ["--store", str(store_dir), "reindex"])
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == ["claude-from-config"]
+
+
+def test_reindex_uses_claude_default_model_when_enrichment_model_unset(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(
+        tmp_path,
+        enrichment_section=None,
+        claude_section="claude:\n  default_model: claude-from-claude\n",
+    )
+
+    result = runner.invoke(app, ["--store", str(store_dir), "reindex"])
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == ["claude-from-claude"]
+
+
+def test_reindex_flag_overrides_config(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(
+        tmp_path,
+        enrichment_section="enrichment:\n  model: claude-from-config\n",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "--store",
+            str(store_dir),
+            "reindex",
+            "--enrichment-model",
+            "claude-from-flag",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == ["claude-from-flag"]
+
+
+def test_reindex_no_enrichment_short_circuits_factory(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(tmp_path, enrichment_section=None)
+
+    result = runner.invoke(
+        app, ["--store", str(store_dir), "reindex", "--no-enrichment"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == []
+    assert "enriched:" not in result.output
+    assert "enrichment-cache-hits:" not in result.output
+
+
+def test_reindex_disabled_in_config_short_circuits_factory(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(
+        tmp_path,
+        enrichment_section="enrichment:\n  enabled: false\n",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "--store",
+            str(store_dir),
+            "reindex",
+            "--enrichment-model",
+            "claude-from-flag",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.models == []
+    assert "enriched:" not in result.output
+
+
+def test_reindex_uses_default_enrichment_idle_timeout(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(tmp_path, enrichment_section=None)
+
+    result = runner.invoke(app, ["--store", str(store_dir), "reindex"])
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.idle_timeouts == [300.0]
+
+
+def test_reindex_enrichment_idle_timeout_flag_overrides_default(
+    tmp_path: Path, factory_recorder: _FactoryRecorder
+) -> None:
+    store_dir, _ = _make_store_with_enrichment(tmp_path, enrichment_section=None)
+
+    result = runner.invoke(
+        app,
+        [
+            "--store",
+            str(store_dir),
+            "reindex",
+            "--enrichment-idle-timeout",
+            "42.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert factory_recorder.idle_timeouts == [42.5]
