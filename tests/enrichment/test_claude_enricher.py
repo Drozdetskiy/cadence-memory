@@ -97,9 +97,7 @@ def test_fenced_json_block_is_parsed() -> None:
     fenced = f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
     enricher, _ = _make_enricher(fenced)
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="body-text", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="body-text", summary=None)
 
     assert result.keywords == ("alpha", "бета")
     assert result.questions == ("q1?",)
@@ -111,9 +109,7 @@ def test_invalid_json_yields_empty_result_and_warns(
 ) -> None:
     enricher, runner = _make_enricher("not json at all")
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert runner.call_count == 1
     assert result == EnrichmentResult(
@@ -135,9 +131,7 @@ def test_non_zero_exit_yields_empty_result_and_warns(
         RunResult(output="", exit_code=1, idle_timed_out=False),
     )
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -152,9 +146,7 @@ def test_idle_timeout_yields_empty_result_and_warns(
         RunResult(output="", exit_code=137, idle_timed_out=True),
     )
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -166,9 +158,7 @@ def test_empty_output_yields_empty_result_and_warns(
 ) -> None:
     enricher, _ = _make_enricher("   \n  ")
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -180,9 +170,7 @@ def test_missing_keys_yield_empty_result_and_warn(
 ) -> None:
     enricher, _ = _make_enricher(json.dumps({"keywords": ["a"]}))
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -199,9 +187,7 @@ def test_wrong_value_types_yield_empty_result_and_warn(
     }
     enricher, _ = _make_enricher(json.dumps(payload))
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -223,9 +209,7 @@ def test_runner_exception_yields_empty_result_and_warns(
 
     enricher = ClaudeEnricher(runner=_RaisingRunner(), model="m", now=_fixed_now)
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert result.keywords == ()
     captured = capsys.readouterr()
@@ -242,9 +226,7 @@ def test_keywords_clamped_to_max() -> None:
     }
     enricher, _ = _make_enricher(json.dumps(payload))
 
-    result = enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    result = enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert len(result.keywords) == MAX_KEYWORDS
     assert result.keywords[0] == "kw0"
@@ -274,9 +256,7 @@ def test_prompt_renders_placeholders_for_missing_summary_and_path() -> None:
     payload = {"keywords": ["k"], "questions": ["q?"], "alt_phrasings": ["a"]}
     enricher, runner = _make_enricher(json.dumps(payload))
 
-    enricher.enrich_chunk(
-        title="t", heading_path=(), body="b", summary=None
-    )
+    enricher.enrich_chunk(title="t", heading_path=(), body="b", summary=None)
 
     assert runner.last_prompt is not None
     assert "(none)" in runner.last_prompt

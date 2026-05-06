@@ -8,7 +8,17 @@ from typing import Literal, Protocol
 
 from cadence_memory.documents.chunker import Chunk
 
-__all__ = ["Store", "StoredChunk", "StoredDocument"]
+__all__ = ["Mention", "Store", "StoredChunk", "StoredDocument"]
+
+
+MentionKind = Literal["code", "schema", "endpoint", "doc"]
+
+
+@dataclass(frozen=True, slots=True)
+class Mention:
+    target: str
+    target_kind: MentionKind
+    line_range: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +58,7 @@ class StoredChunk:
 
 type _DocList = list[StoredDocument]
 type _ChunkList = list[StoredChunk]
+type _MentionList = list[Mention]
 
 
 class Store(Protocol):
@@ -94,6 +105,12 @@ class Store(Protocol):
     ) -> None: ...
 
     def discover_cache_clear(self) -> None: ...
+
+    def upsert_mentions(self, chunk_id: str, mentions: Sequence[Mention]) -> None: ...
+
+    def get_mentions(self, chunk_id: str) -> _MentionList: ...
+
+    def find_backlinks(self, target: str, *, target_kind: str | None = None) -> _ChunkList: ...
 
     def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None: ...
 

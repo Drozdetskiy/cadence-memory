@@ -59,6 +59,7 @@ from cadence_memory.formatters import (
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
 from cadence_memory.reindex.engine import reindex as run_reindex
+from cadence_memory.store.interface import Mention, StoredChunk
 from cadence_memory.store.sqlite_store import SqliteStore
 from cadence_memory.store_locator import StoreNotFoundError, resolve_store_dir
 
@@ -529,6 +530,163 @@ def show(
 
     fmt = _resolve_format(format)
     typer.echo(format_document(doc, format=fmt, include_body=True))
+
+
+_BACKLINK_COLUMNS: Final = ("chunk_id", "kind", "title", "line_range")
+_MENTION_COLUMNS: Final = ("kind", "target", "line_range")
+
+
+def _render_table(columns: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    table_rows: list[Sequence[str]] = [columns, *rows]
+    widths = [max(len(row[col_idx]) for row in table_rows) for col_idx in range(len(columns))]
+    lines = [
+        "  ".join(value.ljust(widths[col_idx]) for col_idx, value in enumerate(row)).rstrip()
+        for row in table_rows
+    ]
+    return "\n".join(lines)
+
+
+def _expand_backlink_rows(
+    chunks: Sequence[StoredChunk],
+    *,
+    target: str,
+    kind: str | None,
+    get_mentions: Callable[[str], list[Mention]],
+) -> list[tuple[StoredChunk, str | None]]:
+    rows: list[tuple[StoredChunk, str | None]] = []
+    for chunk in chunks:
+        matches = [
+            m
+            for m in get_mentions(chunk.id)
+            if m.target == target and (kind is None or m.target_kind == kind)
+        ]
+        if not matches:
+            continue
+        for m in matches:
+            rows.append((chunk, m.line_range))
+    return rows
+
+
+@app.command()
+def backlinks(
+    ctx: typer.Context,
+    target: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Exact mention target to resolve back-references for "
+                "(e.g. 'src/foo.py', 'GET /v1/users', 'BillingEntity')."
+            ),
+        ),
+    ],
+    kind: Annotated[
+        Literal["code", "schema", "endpoint", "doc"] | None,
+        typer.Option(
+            "--kind",
+            help="Filter by mention kind (code, schema, endpoint, doc).",
+        ),
+    ] = None,
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """Find chunks that mention the given target."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            chunks = store.find_backlinks(target, target_kind=kind)
+            rows = _expand_backlink_rows(
+                chunks,
+                target=target,
+                kind=kind,
+                get_mentions=store.get_mentions,
+            )
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    if not rows:
+        typer.echo("(no backlinks)", err=True)
+        return
+
+    fmt = _resolve_format(format)
+    if fmt == "json":
+        payload = [
+            {
+                "chunk_id": chunk.id,
+                "document_id": chunk.document_id,
+                "kind": chunk.document_kind,
+                "title": chunk.document_title,
+                "line_range": line_range,
+            }
+            for chunk, line_range in rows
+        ]
+        typer.echo(json.dumps(payload, indent=2, sort_keys=False, ensure_ascii=False))
+        return
+
+    table_rows = [
+        (chunk.id, chunk.document_kind, chunk.document_title, line_range or "")
+        for chunk, line_range in rows
+    ]
+    typer.echo(_render_table(_BACKLINK_COLUMNS, table_rows))
+
+
+@app.command()
+def mentions(
+    ctx: typer.Context,
+    chunk_id: Annotated[
+        str,
+        typer.Argument(help="Chunk id (e.g. 'proj:foo.md#slug')."),
+    ],
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """List the targets a chunk mentions."""
+    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    try:
+        try:
+            chunk = store.get_chunk(chunk_id)
+            chunk_mentions = store.get_mentions(chunk_id) if chunk is not None else []
+        except sqlite3.Error as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    finally:
+        store.close()
+
+    if chunk is None:
+        typer.echo(f"error: unknown chunk: {chunk_id}", err=True)
+        raise typer.Exit(code=1)
+
+    if not chunk_mentions:
+        typer.echo("(no mentions)", err=True)
+        return
+
+    fmt = _resolve_format(format)
+    if fmt == "json":
+        payload = [
+            {
+                "target_kind": m.target_kind,
+                "target": m.target,
+                "line_range": m.line_range,
+            }
+            for m in chunk_mentions
+        ]
+        typer.echo(json.dumps(payload, indent=2, sort_keys=False, ensure_ascii=False))
+        return
+
+    table_rows = [(m.target_kind, m.target, m.line_range or "") for m in chunk_mentions]
+    typer.echo(_render_table(_MENTION_COLUMNS, table_rows))
 
 
 @app.command()

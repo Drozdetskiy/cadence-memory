@@ -664,16 +664,14 @@ def test_legacy_store_without_enrichment_column_is_migrated(tmp_path: Path) -> N
             "2026-01-01T00:00:00Z",
         ),
     )
-    legacy.execute(
-        "INSERT INTO tags VALUES (?, ?)", ("proj:legacy.md", "legacytag")
-    )
+    legacy.execute("INSERT INTO tags VALUES (?, ?)", ("proj:legacy.md", "legacytag"))
     legacy.execute(
         "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             "proj:legacy.md#_preamble",
             "proj:legacy.md",
             "_preamble",
-            '[]',
+            "[]",
             "old body legacytoken",
             0,
             "h" * 64,

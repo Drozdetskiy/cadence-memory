@@ -17,6 +17,7 @@ from cadence_memory.documents import hashes
 from cadence_memory.documents.chunker import Chunk, chunk_markdown
 from cadence_memory.documents.parser import parse_file
 from cadence_memory.enrichment.interface import Enricher, EnrichmentResult
+from cadence_memory.mentions.extractor import extract_mentions
 from cadence_memory.store.interface import Store, StoredDocument
 
 __all__ = ["ReindexError", "ReindexResult", "reindex"]
@@ -218,6 +219,9 @@ def reindex(
         if doc.id in chunk_rebuild_ids:
             chunks = chunk_markdown(doc.body, kind=doc.kind, doc_id=doc.id)
             store.upsert_chunks(doc.id, chunks)
+            for chunk in chunks:
+                chunk_id = f"{doc.id}#{chunk.slug}"
+                store.upsert_mentions(chunk_id, extract_mentions(chunk.body))
             enriched, cache_hits = _enrich_document_chunks(
                 doc_id=doc.id,
                 doc_title=doc.title,
@@ -265,9 +269,7 @@ def _enrich_document_chunks(
     for chunk in chunks:
         chunk_id = f"{doc_id}#{chunk.slug}"
         c_hash = hashes.chunk_content_hash(chunk.slug, chunk.body)
-        cached_result = _load_cached_enrichment(
-            store, c_hash, expected_model=expected_model
-        )
+        cached_result = _load_cached_enrichment(store, c_hash, expected_model=expected_model)
         if cached_result is not None:
             store.upsert_chunk_enrichment(chunk_id, cached_result.to_index_text())
             cache_hits += 1
@@ -312,5 +314,5 @@ def _load_cached_enrichment(
             model=cached_model,
             generated_at=str(cached["generated_at"]),
         )
-    except (ValueError, KeyError):
+    except ValueError, KeyError:
         return None

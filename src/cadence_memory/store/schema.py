@@ -89,12 +89,25 @@ CREATE TABLE IF NOT EXISTS enrichment_cache (
 )
 """
 
+MENTIONS_DDL = """
+CREATE TABLE IF NOT EXISTS mentions (
+    chunk_id TEXT NOT NULL,
+    target TEXT NOT NULL,
+    target_kind TEXT NOT NULL,
+    line_range TEXT,
+    FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+)
+"""
+
 INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_documents_kind ON documents(kind)",
     "CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project)",
     "CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_type)",
     "CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_discover_cache_path ON discover_cache(path)",
+    "CREATE INDEX IF NOT EXISTS idx_mentions_target ON mentions(target)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_pk "
+    "ON mentions(chunk_id, target, target_kind, COALESCE(line_range, ''))",
 )
 
 
@@ -107,6 +120,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(DOCUMENTS_FTS_DDL)
         conn.execute(DISCOVER_CACHE_DDL)
         conn.execute(ENRICHMENT_CACHE_DDL)
+        conn.execute(MENTIONS_DDL)
         for stmt in INDEX_DDL:
             conn.execute(stmt)
         chunk_columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
@@ -120,9 +134,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_documents_fts(conn: sqlite3.Connection) -> None:
-    fts_columns = [
-        row[1] for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()
-    ]
+    fts_columns = [row[1] for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()]
     if "enrichment" in fts_columns:
         return
     conn.execute("DROP TABLE IF EXISTS documents_fts")
