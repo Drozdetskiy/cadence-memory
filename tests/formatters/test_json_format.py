@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import json
 
-from cadence_memory.formatters import format_document, format_documents
-from cadence_memory.store.interface import StoredDocument
+from cadence_memory.formatters import (
+    format_chunk,
+    format_chunks,
+    format_document,
+    format_documents,
+)
+from cadence_memory.store.interface import StoredChunk, StoredDocument
 
 
 def _make_doc(
@@ -104,6 +109,111 @@ def test_format_document_passes_unicode_through() -> None:
     parsed = json.loads(output)
     assert parsed["title"] == "Héllo 🌍"
     assert parsed["body"] == "café"
+
+
+def _make_chunk(
+    *,
+    chunk_id: str = "proj:README.md#overview",
+    document_id: str = "proj:README.md",
+    slug: str = "overview",
+    heading_path: tuple[str, ...] = ("Overview",),
+    body: str = "## Overview\n\nchunk body text\n",
+    order: int = 1,
+    document_title: str = "Title",
+    document_kind: str = "doc",
+    document_project: str | None = "proj",
+) -> StoredChunk:
+    return StoredChunk(
+        id=chunk_id,
+        document_id=document_id,
+        slug=slug,
+        heading_path=heading_path,
+        body=body,
+        order=order,
+        content_hash="c" * 64,
+        document_title=document_title,
+        document_kind=document_kind,
+        document_project=document_project,
+    )
+
+
+def test_format_chunks_returns_json_array() -> None:
+    chunks = [
+        _make_chunk(chunk_id="proj:a.md#one", document_id="proj:a.md"),
+        _make_chunk(chunk_id="proj:a.md#two", document_id="proj:a.md", slug="two"),
+    ]
+
+    output = format_chunks(chunks, format="json")
+    parsed = json.loads(output)
+
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    assert {entry["chunk_id"] for entry in parsed} == {"proj:a.md#one", "proj:a.md#two"}
+
+
+def test_format_chunks_includes_expected_fields() -> None:
+    chunks = [_make_chunk()]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert set(parsed[0].keys()) == {
+        "chunk_id",
+        "document_id",
+        "kind",
+        "title",
+        "project",
+        "heading_path",
+        "slug",
+        "snippet",
+    }
+    assert parsed[0]["heading_path"] == ["Overview"]
+    assert parsed[0]["kind"] == "doc"
+    assert parsed[0]["title"] == "Title"
+    assert parsed[0]["project"] == "proj"
+    assert parsed[0]["slug"] == "overview"
+
+
+def test_format_chunks_snippet_truncated_to_200_chars() -> None:
+    body = "X" * 500
+    chunks = [_make_chunk(body=body)]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert len(parsed[0]["snippet"]) == 200
+    assert parsed[0]["snippet"] == "X" * 200
+
+
+def test_format_chunks_snippet_collapses_newlines() -> None:
+    chunks = [_make_chunk(body="\nline one\nline two\n")]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["snippet"] == "line one line two"
+
+
+def test_format_chunks_empty_list_is_empty_json_array() -> None:
+    output = format_chunks([], format="json")
+
+    assert json.loads(output) == []
+
+
+def test_format_chunks_preamble_has_empty_heading_path() -> None:
+    chunks = [_make_chunk(heading_path=(), slug="_preamble", body="leading body")]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["heading_path"] == []
+    assert parsed[0]["slug"] == "_preamble"
+
+
+def test_format_chunk_returns_json_object() -> None:
+    chunk = _make_chunk()
+
+    output = format_chunk(chunk, format="json")
+    parsed = json.loads(output)
+
+    assert isinstance(parsed, dict)
+    assert parsed["chunk_id"] == chunk.id
 
 
 def test_format_documents_preserves_all_metadata_fields() -> None:

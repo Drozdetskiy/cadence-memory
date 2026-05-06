@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from cadence_memory.formatters import format_document, format_documents
-from cadence_memory.store.interface import StoredDocument
+from cadence_memory.formatters import (
+    format_chunk,
+    format_chunks,
+    format_document,
+    format_documents,
+)
+from cadence_memory.store.interface import StoredChunk, StoredDocument
 
 
 def _make_doc(
@@ -131,3 +136,107 @@ def test_format_document_omits_body_when_include_body_false() -> None:
 
     assert "should-not-appear" not in output
     assert "---" not in output
+
+
+def _make_chunk(
+    *,
+    chunk_id: str = "proj:README.md#overview",
+    document_id: str = "proj:README.md",
+    slug: str = "overview",
+    heading_path: tuple[str, ...] = ("Overview",),
+    body: str = "## Overview\n\nchunk body text\n",
+    order: int = 1,
+    document_title: str = "Title",
+    document_kind: str = "doc",
+    document_project: str | None = "proj",
+) -> StoredChunk:
+    return StoredChunk(
+        id=chunk_id,
+        document_id=document_id,
+        slug=slug,
+        heading_path=heading_path,
+        body=body,
+        order=order,
+        content_hash="c" * 64,
+        document_title=document_title,
+        document_kind=document_kind,
+        document_project=document_project,
+    )
+
+
+def test_format_chunks_renders_column_headers() -> None:
+    chunks = [_make_chunk()]
+
+    output = format_chunks(chunks, format="table")
+    header_line = output.splitlines()[0]
+
+    for column in ("kind", "chunk_id", "heading"):
+        assert column in header_line
+
+
+def test_format_chunks_empty_list() -> None:
+    output = format_chunks([], format="table")
+
+    assert output == "(no chunks)"
+
+
+def test_format_chunks_preamble_has_empty_heading() -> None:
+    chunks = [
+        _make_chunk(
+            chunk_id="proj:README.md#_preamble",
+            slug="_preamble",
+            heading_path=(),
+        )
+    ]
+
+    output = format_chunks(chunks, format="table")
+    lines = output.splitlines()
+
+    assert len(lines) == 2  # header + 1 row
+    assert "proj:README.md#_preamble" in lines[1]
+    heading_col_index = lines[0].index("heading")
+    assert lines[1][heading_col_index:].strip() == ""
+
+
+def test_format_chunks_renders_one_line_per_chunk() -> None:
+    chunks = [
+        _make_chunk(chunk_id="proj:a.md#one", document_id="proj:a.md"),
+        _make_chunk(chunk_id="proj:a.md#two", document_id="proj:a.md", slug="two"),
+        _make_chunk(chunk_id="proj:b.md#one", document_id="proj:b.md"),
+    ]
+
+    output = format_chunks(chunks, format="table")
+    lines = output.splitlines()
+
+    assert len(lines) == 4  # header + 3 rows
+    assert "proj:a.md#one" in lines[1]
+    assert "proj:a.md#two" in lines[2]
+    assert "proj:b.md#one" in lines[3]
+
+
+def test_format_chunks_joins_heading_path_with_arrow() -> None:
+    chunks = [_make_chunk(heading_path=("Top", "Sub"))]
+
+    output = format_chunks(chunks, format="table")
+
+    assert "Top > Sub" in output
+
+
+def test_format_chunks_truncates_long_heading() -> None:
+    long_heading = "A" * 100
+    chunks = [_make_chunk(heading_path=(long_heading,))]
+
+    output = format_chunks(chunks, format="table")
+
+    assert "…" in output
+    assert "A" * 100 not in output
+
+
+def test_format_chunk_contains_body_after_separator() -> None:
+    chunk = _make_chunk(body="the chunk body content")
+
+    output = format_chunk(chunk, format="table")
+
+    assert "---" in output
+    sep_index = output.index("---")
+    assert "the chunk body content" in output[sep_index:]

@@ -40,10 +40,25 @@ CREATE TABLE IF NOT EXISTS relations (
 )
 """
 
+CHUNKS_DDL = """
+CREATE TABLE IF NOT EXISTS chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    heading_path TEXT NOT NULL,
+    body TEXT NOT NULL,
+    chunk_order INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+)
+"""
+
 DOCUMENTS_FTS_DDL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-    id UNINDEXED,
+    chunk_id UNINDEXED,
+    document_id UNINDEXED,
     title,
+    heading_path,
     body,
     tags,
     tokenize='porter unicode61'
@@ -65,6 +80,7 @@ INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_documents_kind ON documents(kind)",
     "CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project)",
     "CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_type)",
+    "CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_discover_cache_path ON discover_cache(path)",
 )
 
@@ -74,6 +90,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(DOCUMENTS_DDL)
         conn.execute(TAGS_DDL)
         conn.execute(RELATIONS_DDL)
+        conn.execute(CHUNKS_DDL)
         conn.execute(DOCUMENTS_FTS_DDL)
         conn.execute(DISCOVER_CACHE_DDL)
         for stmt in INDEX_DDL:

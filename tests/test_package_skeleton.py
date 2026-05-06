@@ -60,14 +60,14 @@ def test_every_module_imports() -> None:
 
 
 def test_version_constant() -> None:
-    assert cadence_memory.__version__ == "0.1.0"
+    assert cadence_memory.__version__ == "0.2.0"
 
 
 def test_cli_version_flag() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout == "cadence-memory 0.1.0\n"
+    assert result.stdout == "cadence-memory 0.2.0\n"
 
 
 def test_default_resources_ship_with_package() -> None:

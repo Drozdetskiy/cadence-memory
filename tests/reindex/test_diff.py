@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,10 @@ from cadence_memory.config import (
     GlobalsConfig,
     ProjectConfig,
 )
+from cadence_memory.documents.chunker import Chunk
 from cadence_memory.reindex.diff import diff
 from cadence_memory.reindex.engine import ReindexError, reindex
-from cadence_memory.store.interface import StoredDocument
+from cadence_memory.store.interface import StoredChunk, StoredDocument
 from cadence_memory.store.sqlite_store import SqliteStore
 
 
@@ -74,6 +76,7 @@ class _CountingStore:
         self.inner = inner
         self.upsert_calls: list[StoredDocument] = []
         self.delete_calls: list[str] = []
+        self.upsert_chunks_calls: list[tuple[str, tuple[Chunk, ...]]] = []
 
     def upsert(self, doc: StoredDocument) -> None:
         self.upsert_calls.append(doc)
@@ -95,6 +98,16 @@ class _CountingStore:
     ) -> list[StoredDocument]:
         return self.inner.list(kind=kind, project=project, source_type=source_type)
 
+    def upsert_chunks(self, document_id: str, chunks: Sequence[Chunk]) -> None:
+        self.upsert_chunks_calls.append((document_id, tuple(chunks)))
+        self.inner.upsert_chunks(document_id, chunks)
+
+    def get_chunks(self, document_id: str) -> list[StoredChunk]:
+        return self.inner.get_chunks(document_id)
+
+    def get_chunk(self, chunk_id: str) -> StoredChunk | None:
+        return self.inner.get_chunk(chunk_id)
+
     def query(
         self,
         text: str,
@@ -102,7 +115,7 @@ class _CountingStore:
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
-    ) -> list[StoredDocument]:
+    ) -> list[StoredChunk]:
         return self.inner.query(text, kind=kind, project=project, limit=limit)
 
     def all_ids(self) -> set[str]:
@@ -144,6 +157,7 @@ def test_diff_classifies_new_entry_as_inserted_without_writing(tmp_path: Path) -
         assert result.skipped_optional_missing == ()
         assert store.upsert_calls == []
         assert store.delete_calls == []
+        assert store.upsert_chunks_calls == []
         assert store.all_ids() == before_ids
         assert db_path.stat().st_mtime_ns == before_mtime
     finally:

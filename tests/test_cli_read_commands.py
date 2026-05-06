@@ -119,8 +119,9 @@ def test_query_matches_known_token(tmp_path: Path) -> None:
     )
     assert matched.exit_code == 0, matched.output
     parsed = json.loads(matched.output)
-    assert len(parsed) == 1
-    assert parsed[0]["id"] == "proj:alpha.md"
+    assert len(parsed) >= 1
+    assert {entry["document_id"] for entry in parsed} == {"proj:alpha.md"}
+    assert all(entry["chunk_id"].startswith("proj:alpha.md#") for entry in parsed)
 
     capped = runner.invoke(
         app,
@@ -152,6 +153,42 @@ def test_query_matches_known_token(tmp_path: Path) -> None:
     )
     assert missing.exit_code == 0, missing.output
     assert json.loads(missing.output) == []
+
+
+def test_query_json_has_chunk_shape(tmp_path: Path) -> None:
+    store_dir, _ = _make_seeded_store(tmp_path)
+
+    result = runner.invoke(
+        app, ["--store", str(store_dir), "query", "uniqalpha", "--format", "json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert len(parsed) >= 1
+    entry = parsed[0]
+    assert set(entry.keys()) == {
+        "chunk_id",
+        "document_id",
+        "kind",
+        "title",
+        "project",
+        "heading_path",
+        "slug",
+        "snippet",
+    }
+
+
+def test_query_table_renders_chunk_columns(tmp_path: Path) -> None:
+    store_dir, _ = _make_seeded_store(tmp_path)
+
+    result = runner.invoke(
+        app, ["--store", str(store_dir), "query", "uniqalpha", "--format", "table"]
+    )
+
+    assert result.exit_code == 0, result.output
+    header = result.output.splitlines()[0]
+    for column in ("kind", "chunk_id", "heading"):
+        assert column in header
 
 
 def test_get_prints_raw_markdown(tmp_path: Path) -> None:
@@ -288,8 +325,8 @@ def test_query_filter_by_kind(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
-    assert len(parsed) == 1
-    assert parsed[0]["id"] == "proj:beta.md"
+    assert len(parsed) >= 1
+    assert {entry["document_id"] for entry in parsed} == {"proj:beta.md"}
 
 
 def test_query_filter_by_project(tmp_path: Path) -> None:
@@ -311,7 +348,7 @@ def test_query_filter_by_project(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
-    assert {entry["id"] for entry in parsed} == {"proj:beta.md", "proj:gamma.md"}
+    assert {entry["document_id"] for entry in parsed} == {"proj:beta.md", "proj:gamma.md"}
 
 
 def test_query_invalid_fts_returns_clean_error(tmp_path: Path) -> None:
@@ -348,6 +385,36 @@ def test_get_rejects_format_flag(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
+
+
+def test_get_chunk_prints_chunk_body(tmp_path: Path) -> None:
+    store_dir, _ = _make_seeded_store(tmp_path)
+
+    list_result = runner.invoke(
+        app,
+        ["--store", str(store_dir), "query", "uniqalpha", "--format", "json"],
+    )
+    assert list_result.exit_code == 0, list_result.output
+    chunks = json.loads(list_result.output)
+    assert len(chunks) >= 1
+    chunk_id = chunks[0]["chunk_id"]
+
+    result = runner.invoke(app, ["--store", str(store_dir), "get", chunk_id])
+
+    assert result.exit_code == 0, result.output
+    assert "uniqalpha" in result.output
+    assert result.output.endswith("\n")
+
+
+def test_get_chunk_unknown_exits_one(tmp_path: Path) -> None:
+    store_dir, _ = _make_seeded_store(tmp_path)
+
+    result = runner.invoke(
+        app, ["--store", str(store_dir), "get", "proj:alpha.md#unknown"]
+    )
+
+    assert result.exit_code == 1
+    assert "unknown chunk" in result.output
 
 
 def test_get_appends_trailing_newline_when_missing(tmp_path: Path) -> None:

@@ -1,11 +1,14 @@
-"""Store Protocol and StoredDocument dataclass defining the storage boundary."""
+"""Store Protocol and StoredDocument/StoredChunk dataclasses defining the storage boundary."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-__all__ = ["Store", "StoredDocument"]
+from cadence_memory.documents.chunker import Chunk
+
+__all__ = ["Store", "StoredChunk", "StoredDocument"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +30,22 @@ class StoredDocument:
     indexed_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class StoredChunk:
+    id: str
+    document_id: str
+    slug: str
+    heading_path: tuple[str, ...]
+    body: str
+    order: int
+    content_hash: str
+    document_title: str
+    document_kind: str
+    document_project: str | None
+
+
 type _DocList = list[StoredDocument]
+type _ChunkList = list[StoredChunk]
 
 
 class Store(Protocol):
@@ -45,6 +63,12 @@ class Store(Protocol):
         source_type: str | None = None,
     ) -> _DocList: ...
 
+    def upsert_chunks(self, document_id: str, chunks: Sequence[Chunk]) -> None: ...
+
+    def get_chunks(self, document_id: str) -> _ChunkList: ...
+
+    def get_chunk(self, chunk_id: str) -> StoredChunk | None: ...
+
     def query(
         self,
         text: str,
@@ -52,7 +76,7 @@ class Store(Protocol):
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
-    ) -> _DocList: ...
+    ) -> _ChunkList: ...
 
     def all_ids(self) -> set[str]: ...
 

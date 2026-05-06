@@ -38,10 +38,47 @@ def test_init_schema_creates_all_tables(tmp_path: Path) -> None:
             "documents",
             "tags",
             "relations",
+            "chunks",
             "documents_fts",
             "discover_cache",
         ):
             assert expected in names
+    finally:
+        conn.close()
+
+
+def test_init_schema_creates_chunk_shaped_fts(tmp_path: Path) -> None:
+    conn = _open(tmp_path)
+    try:
+        init_schema(conn)
+        cols = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()
+        ]
+        for expected in ("chunk_id", "document_id", "title", "heading_path", "body", "tags"):
+            assert expected in cols
+    finally:
+        conn.close()
+
+
+def test_init_schema_creates_chunks_table_with_columns(tmp_path: Path) -> None:
+    conn = _open(tmp_path)
+    try:
+        init_schema(conn)
+        cols = {
+            row[1]: row[2]
+            for row in conn.execute("PRAGMA table_info(chunks)").fetchall()
+        }
+        for expected in (
+            "id",
+            "document_id",
+            "slug",
+            "heading_path",
+            "body",
+            "chunk_order",
+            "content_hash",
+        ):
+            assert expected in cols
     finally:
         conn.close()
 
@@ -60,6 +97,7 @@ def test_init_schema_creates_all_indexes(tmp_path: Path) -> None:
             "idx_documents_kind",
             "idx_documents_project",
             "idx_documents_source",
+            "idx_chunks_document",
             "idx_discover_cache_path",
         ):
             assert expected in names

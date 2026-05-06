@@ -1,14 +1,17 @@
-"""SqliteStore implementing upsert, delete, get, list, FTS5 query, and all_ids."""
+"""SqliteStore implementing upsert, delete, get, list, FTS5 query, and chunk APIs."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from cadence_memory.store.interface import StoredDocument
+from cadence_memory.documents.chunker import Chunk
+from cadence_memory.store.interface import StoredChunk, StoredDocument
 from cadence_memory.store.schema import init_schema
 
 __all__ = ["SqliteStore"]
@@ -17,6 +20,7 @@ __all__ = ["SqliteStore"]
 _SourceType = Literal["project", "global", "ephemeral"]
 
 type _DocList = list[StoredDocument]
+type _ChunkList = list[StoredChunk]
 
 
 class SqliteStore:
@@ -29,31 +33,61 @@ class SqliteStore:
 
     def upsert(self, doc: StoredDocument) -> None:
         with self._conn:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO documents (
-                    id, source_type, project, abs_path, rel_path,
-                    kind, title, body,
-                    content_hash, frontmatter_hash, annotation_hash,
-                    mtime, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    doc.id,
-                    doc.source_type,
-                    doc.project,
-                    doc.abs_path,
-                    doc.rel_path,
-                    doc.kind,
-                    doc.title,
-                    doc.body,
-                    doc.content_hash,
-                    doc.frontmatter_hash,
-                    doc.annotation_hash,
-                    doc.mtime,
-                    doc.indexed_at,
-                ),
-            )
+            existing = self._conn.execute(
+                "SELECT 1 FROM documents WHERE id = ?", (doc.id,)
+            ).fetchone()
+            if existing is None:
+                self._conn.execute(
+                    """
+                    INSERT INTO documents (
+                        id, source_type, project, abs_path, rel_path,
+                        kind, title, body,
+                        content_hash, frontmatter_hash, annotation_hash,
+                        mtime, indexed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        doc.id,
+                        doc.source_type,
+                        doc.project,
+                        doc.abs_path,
+                        doc.rel_path,
+                        doc.kind,
+                        doc.title,
+                        doc.body,
+                        doc.content_hash,
+                        doc.frontmatter_hash,
+                        doc.annotation_hash,
+                        doc.mtime,
+                        doc.indexed_at,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE documents SET
+                        source_type = ?, project = ?, abs_path = ?, rel_path = ?,
+                        kind = ?, title = ?, body = ?,
+                        content_hash = ?, frontmatter_hash = ?, annotation_hash = ?,
+                        mtime = ?, indexed_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        doc.source_type,
+                        doc.project,
+                        doc.abs_path,
+                        doc.rel_path,
+                        doc.kind,
+                        doc.title,
+                        doc.body,
+                        doc.content_hash,
+                        doc.frontmatter_hash,
+                        doc.annotation_hash,
+                        doc.mtime,
+                        doc.indexed_at,
+                        doc.id,
+                    ),
+                )
             self._conn.execute("DELETE FROM tags WHERE doc_id = ?", (doc.id,))
             if doc.tags:
                 self._conn.executemany(
@@ -66,16 +100,17 @@ class SqliteStore:
                     "INSERT INTO relations (src_id, dst_id) VALUES (?, ?)",
                     [(doc.id, dst) for dst in doc.related],
                 )
-            self._conn.execute("DELETE FROM documents_fts WHERE id = ?", (doc.id,))
             self._conn.execute(
-                "INSERT INTO documents_fts (id, title, body, tags) VALUES (?, ?, ?, ?)",
-                (doc.id, doc.title, doc.body, " ".join(doc.tags)),
+                "UPDATE documents_fts SET title = ?, tags = ? WHERE document_id = ?",
+                (doc.title, " ".join(doc.tags), doc.id),
             )
 
     def delete(self, doc_id: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-            self._conn.execute("DELETE FROM documents_fts WHERE id = ?", (doc_id,))
+            self._conn.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?", (doc_id,)
+            )
 
     def get(self, doc_id: str) -> StoredDocument | None:
         row = self._conn.execute(
@@ -122,6 +157,99 @@ class SqliteStore:
         rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_doc(row) for row in rows]
 
+    def upsert_chunks(self, document_id: str, chunks: Sequence[Chunk]) -> None:
+        doc_row = self._conn.execute(
+            "SELECT title FROM documents WHERE id = ?", (document_id,)
+        ).fetchone()
+        if doc_row is None:
+            raise ValueError(f"document not found: {document_id}")
+        doc_title = cast(str, doc_row[0])
+        tag_rows = self._conn.execute(
+            "SELECT tag FROM tags WHERE doc_id = ? ORDER BY rowid",
+            (document_id,),
+        ).fetchall()
+        tags_blob = " ".join(cast(str, r[0]) for r in tag_rows)
+
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM chunks WHERE document_id = ?", (document_id,)
+            )
+            self._conn.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?", (document_id,)
+            )
+            for chunk in chunks:
+                chunk_id = f"{document_id}#{chunk.slug}"
+                heading_path_json = json.dumps(
+                    list(chunk.heading_path), ensure_ascii=False
+                )
+                content_hash = hashlib.sha256(
+                    (chunk.slug + "\n" + chunk.body).encode("utf-8")
+                ).hexdigest()
+                self._conn.execute(
+                    """
+                    INSERT INTO chunks (
+                        id, document_id, slug, heading_path, body,
+                        chunk_order, content_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chunk_id,
+                        document_id,
+                        chunk.slug,
+                        heading_path_json,
+                        chunk.body,
+                        chunk.order,
+                        content_hash,
+                    ),
+                )
+                heading_path_fts = " ".join(chunk.heading_path)
+                self._conn.execute(
+                    """
+                    INSERT INTO documents_fts (
+                        chunk_id, document_id, title, heading_path, body, tags
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chunk_id,
+                        document_id,
+                        doc_title,
+                        heading_path_fts,
+                        chunk.body,
+                        tags_blob,
+                    ),
+                )
+
+    def get_chunks(self, document_id: str) -> _ChunkList:
+        rows = self._conn.execute(
+            """
+            SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
+                   c.chunk_order, c.content_hash,
+                   d.title, d.kind, d.project
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.document_id = ?
+            ORDER BY c.chunk_order
+            """,
+            (document_id,),
+        ).fetchall()
+        return [self._row_to_chunk(row) for row in rows]
+
+    def get_chunk(self, chunk_id: str) -> StoredChunk | None:
+        row = self._conn.execute(
+            """
+            SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
+                   c.chunk_order, c.content_hash,
+                   d.title, d.kind, d.project
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.id = ?
+            """,
+            (chunk_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_chunk(row)
+
     def query(
         self,
         text: str,
@@ -129,7 +257,7 @@ class SqliteStore:
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
-    ) -> _DocList:
+    ) -> _ChunkList:
         clauses: list[str] = ["documents_fts MATCH ?"]
         params: list[object] = [text]
         if kind is not None:
@@ -139,18 +267,19 @@ class SqliteStore:
             clauses.append("d.project = ?")
             params.append(project)
         sql = (
-            "SELECT d.id, d.source_type, d.project, d.abs_path, d.rel_path, "
-            "d.kind, d.title, d.body, d.content_hash, d.frontmatter_hash, "
-            "d.annotation_hash, d.mtime, d.indexed_at "
+            "SELECT c.id, c.document_id, c.slug, c.heading_path, c.body, "
+            "c.chunk_order, c.content_hash, "
+            "d.title, d.kind, d.project "
             "FROM documents_fts "
-            "JOIN documents d ON d.id = documents_fts.id "
+            "JOIN chunks c ON c.id = documents_fts.chunk_id "
+            "JOIN documents d ON d.id = c.document_id "
             "WHERE " + " AND ".join(clauses) + " "
             "ORDER BY rank "
             "LIMIT ?"
         )
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [self._row_to_doc(row) for row in rows]
+        return [self._row_to_chunk(row) for row in rows]
 
     def all_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT id FROM documents").fetchall()
@@ -216,4 +345,20 @@ class SqliteStore:
             annotation_hash=cast(str, row[10]),
             mtime=cast(int, row[11]),
             indexed_at=cast(str, row[12]),
+        )
+
+    def _row_to_chunk(self, row: tuple[object, ...]) -> StoredChunk:
+        heading_path_raw = cast(str, row[3])
+        heading_path = tuple(cast(list[str], json.loads(heading_path_raw)))
+        return StoredChunk(
+            id=cast(str, row[0]),
+            document_id=cast(str, row[1]),
+            slug=cast(str, row[2]),
+            heading_path=heading_path,
+            body=cast(str, row[4]),
+            order=cast(int, row[5]),
+            content_hash=cast(str, row[6]),
+            document_title=cast(str, row[7]),
+            document_kind=cast(str, row[8]),
+            document_project=cast("str | None", row[9]),
         )
