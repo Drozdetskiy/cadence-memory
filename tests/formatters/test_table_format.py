@@ -149,6 +149,7 @@ def _make_chunk(
     document_title: str = "Title",
     document_kind: str = "doc",
     document_project: str | None = "proj",
+    summary: str | None = None,
 ) -> StoredChunk:
     return StoredChunk(
         id=chunk_id,
@@ -161,6 +162,7 @@ def _make_chunk(
         document_title=document_title,
         document_kind=document_kind,
         document_project=document_project,
+        summary=summary,
     )
 
 
@@ -170,7 +172,7 @@ def test_format_chunks_renders_column_headers() -> None:
     output = format_chunks(chunks, format="table")
     header_line = output.splitlines()[0]
 
-    for column in ("kind", "chunk_id", "heading"):
+    for column in ("kind", "chunk_id", "heading", "summary"):
         assert column in header_line
 
 
@@ -195,7 +197,8 @@ def test_format_chunks_preamble_has_empty_heading() -> None:
     assert len(lines) == 2  # header + 1 row
     assert "proj:README.md#_preamble" in lines[1]
     heading_col_index = lines[0].index("heading")
-    assert lines[1][heading_col_index:].strip() == ""
+    summary_col_index = lines[0].index("summary")
+    assert lines[1][heading_col_index:summary_col_index].strip() == ""
 
 
 def test_format_chunks_renders_one_line_per_chunk() -> None:
@@ -240,3 +243,40 @@ def test_format_chunk_contains_body_after_separator() -> None:
     assert "---" in output
     sep_index = output.index("---")
     assert "the chunk body content" in output[sep_index:]
+
+
+def test_format_chunks_renders_summary_value() -> None:
+    chunks = [_make_chunk(summary="meaningful summary text")]
+
+    output = format_chunks(chunks, format="table")
+
+    assert "meaningful summary text" in output
+
+
+def test_format_chunks_truncates_long_summary_to_80_chars() -> None:
+    long_summary = "B" * 200
+    chunks = [_make_chunk(summary=long_summary)]
+
+    output = format_chunks(chunks, format="table")
+
+    assert "…" in output
+    assert "B" * 200 not in output
+    assert "B" * 79 + "…" in output
+
+
+def test_format_chunks_summary_falls_back_to_body_slice() -> None:
+    chunks = [_make_chunk(body="plain body text without heading", summary=None)]
+
+    output = format_chunks(chunks, format="table")
+
+    assert "plain body text without heading" in output
+
+
+def test_format_chunk_contains_summary_field_block() -> None:
+    chunk = _make_chunk(summary="a single chunk summary line")
+
+    output = format_chunk(chunk, format="table")
+
+    header_block = output.split("---")[0]
+    assert "summary" in header_block
+    assert "a single chunk summary line" in header_block

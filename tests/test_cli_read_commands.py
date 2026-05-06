@@ -174,6 +174,7 @@ def test_query_json_has_chunk_shape(tmp_path: Path) -> None:
         "project",
         "heading_path",
         "slug",
+        "summary",
         "snippet",
     }
 
@@ -187,7 +188,7 @@ def test_query_table_renders_chunk_columns(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     header = result.output.splitlines()[0]
-    for column in ("kind", "chunk_id", "heading"):
+    for column in ("kind", "chunk_id", "heading", "summary"):
         assert column in header
 
 
@@ -409,9 +410,7 @@ def test_get_chunk_prints_chunk_body(tmp_path: Path) -> None:
 def test_get_chunk_unknown_exits_one(tmp_path: Path) -> None:
     store_dir, _ = _make_seeded_store(tmp_path)
 
-    result = runner.invoke(
-        app, ["--store", str(store_dir), "get", "proj:alpha.md#unknown"]
-    )
+    result = runner.invoke(app, ["--store", str(store_dir), "get", "proj:alpha.md#unknown"])
 
     assert result.exit_code == 1
     assert "unknown chunk" in result.output

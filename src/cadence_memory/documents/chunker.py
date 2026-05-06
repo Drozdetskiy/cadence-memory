@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 
 DEFAULT_MAX_CHUNK_TOKENS = 2000
+MAX_SUMMARY_CHARS = 400
+_MIN_SUMMARY_CHARS = 20
 _PREAMBLE_SLUG = "_preamble"
 _SCHEMAS_SLUG = "_schemas"
 _PREAMBLE_MIN_BYTES = 500
@@ -19,6 +21,16 @@ _SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 ENDPOINT_HEADER_RE = re.compile(r"^##\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(/\S+)")
 _SCHEMA_SECTION_TITLES = frozenset({"schemas", "models", "components"})
 
+_OPEN_WHEN_RE = re.compile(r"\bOpen when\b[^\n]+", re.IGNORECASE)
+_LABEL_TRIGGER_RE = re.compile(
+    r"\b(?:Purpose|Overview|Summary)\s*:\s*([^\n]+)",
+    re.IGNORECASE,
+)
+_HEADING_LINE_RE = re.compile(r"^\s*#+\s+")
+_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+_BOLD_TITLE_LINE_RE = re.compile(r"^\s*\*\*[^*]+\*\*\s*$")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
@@ -26,6 +38,122 @@ class Chunk:
     heading_path: tuple[str, ...]
     body: str
     order: int
+    summary: str | None = None
+
+
+def _finalize_summary(text: str) -> str | None:
+    text = text.strip()
+    if not text:
+        return None
+    if len(text) > MAX_SUMMARY_CHARS:
+        text = text[:MAX_SUMMARY_CHARS] + "…"
+    if len(text) < _MIN_SUMMARY_CHARS:
+        return None
+    return text
+
+
+def _strip_code_fences(body: str) -> str:
+    out: list[str] = []
+    in_code = False
+    for line in body.splitlines():
+        if _CODE_FENCE_RE.match(line):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _strip_markdown_noise(body: str) -> str:
+    out: list[str] = []
+    in_code = False
+    for line in body.splitlines():
+        if _CODE_FENCE_RE.match(line):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if (
+            _HEADING_LINE_RE.match(line)
+            or _LIST_MARKER_RE.match(line)
+            or _BOLD_TITLE_LINE_RE.match(line)
+        ):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _first_prose_paragraph(body: str) -> str | None:
+    paragraphs: list[list[str]] = [[]]
+    in_code = False
+    for line in body.splitlines():
+        if _CODE_FENCE_RE.match(line):
+            in_code = not in_code
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        if in_code:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        if (
+            _HEADING_LINE_RE.match(line)
+            or _LIST_MARKER_RE.match(line)
+            or _BOLD_TITLE_LINE_RE.match(line)
+        ):
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        paragraphs[-1].append(stripped)
+    for para in paragraphs:
+        if para:
+            return " ".join(para)
+    return None
+
+
+def _first_two_sentences(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    parts = _SENTENCE_SPLIT_RE.split(stripped, maxsplit=2)
+    return " ".join(parts[:2]).strip() or None
+
+
+def extract_summary(body: str) -> str | None:
+    if not body or not body.strip():
+        return None
+
+    no_code = _strip_code_fences(body)
+
+    open_when_match = _OPEN_WHEN_RE.search(no_code)
+    if open_when_match is not None:
+        candidate = _finalize_summary(open_when_match.group(0))
+        if candidate is not None:
+            return candidate
+
+    label_match = _LABEL_TRIGGER_RE.search(no_code)
+    if label_match is not None:
+        candidate = _finalize_summary(label_match.group(1))
+        if candidate is not None:
+            return candidate
+
+    paragraph = _first_prose_paragraph(body)
+    if paragraph is not None:
+        candidate = _finalize_summary(paragraph)
+        if candidate is not None:
+            return candidate
+
+    two_sentences = _first_two_sentences(_strip_markdown_noise(body))
+    if two_sentences is not None:
+        candidate = _finalize_summary(two_sentences)
+        if candidate is not None:
+            return candidate
+
+    return None
 
 
 def slugify(text: str) -> str:
@@ -214,6 +342,7 @@ def _chunk_generic(
                 heading_path=(),
                 body=piece_body,
                 order=order,
+                summary=extract_summary(piece_body),
             )
         )
         order += 1
@@ -237,6 +366,7 @@ def _chunk_generic(
                     heading_path=heading_path,
                     body=piece_body,
                     order=order,
+                    summary=extract_summary(piece_body),
                 )
             )
             order += 1
@@ -325,6 +455,7 @@ def _chunk_api_spec(
                 heading_path=preamble_heading_path,
                 body=piece_body,
                 order=order,
+                summary=extract_summary(piece_body),
             )
         )
         order += 1
@@ -341,6 +472,7 @@ def _chunk_api_spec(
                     heading_path=endpoint_heading_path,
                     body=piece_body,
                     order=order,
+                    summary=extract_summary(piece_body),
                 )
             )
             order += 1
@@ -356,6 +488,7 @@ def _chunk_api_spec(
                     heading_path=schemas_heading_path,
                     body=piece_body,
                     order=order,
+                    summary=extract_summary(piece_body),
                 )
             )
             order += 1

@@ -12,8 +12,10 @@ __all__ = [
 ]
 
 _TITLE_MAX = 60
+_SUMMARY_MAX = 80
+_SNIPPET_MAX = 200
 _COLUMNS: tuple[str, ...] = ("id", "kind", "project", "title", "tags")
-_CHUNK_COLUMNS: tuple[str, ...] = ("kind", "chunk_id", "heading")
+_CHUNK_COLUMNS: tuple[str, ...] = ("kind", "chunk_id", "heading", "summary")
 
 
 def _truncate_title(title: str, *, limit: int = _TITLE_MAX) -> str:
@@ -39,11 +41,20 @@ def _heading_display(chunk: StoredChunk) -> str:
     return _truncate_title(joined)
 
 
-def _chunk_row(chunk: StoredChunk) -> tuple[str, str, str]:
+def _summary_display(chunk: StoredChunk) -> str:
+    if chunk.summary is not None:
+        return _truncate_title(chunk.summary, limit=_SUMMARY_MAX)
+    flat = chunk.body.replace("\n", " ").strip()
+    fallback = flat[:_SNIPPET_MAX]
+    return _truncate_title(fallback, limit=_SUMMARY_MAX)
+
+
+def _chunk_row(chunk: StoredChunk) -> tuple[str, str, str, str]:
     return (
         chunk.document_kind,
         chunk.id,
         _heading_display(chunk),
+        _summary_display(chunk),
     )
 
 
@@ -106,6 +117,7 @@ def format_chunk(chunk: StoredChunk) -> str:
         ("project", chunk.document_project or ""),
         ("heading", _heading_display(chunk)),
         ("slug", chunk.slug),
+        ("summary", _summary_display(chunk)),
     )
     label_width = max(len(label) for label, _ in fields)
     header = "\n".join(f"{label.ljust(label_width)}  {value}" for label, value in fields)

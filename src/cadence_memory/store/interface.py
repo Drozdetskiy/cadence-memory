@@ -42,6 +42,7 @@ class StoredChunk:
     document_title: str
     document_kind: str
     document_project: str | None
+    summary: str | None = None
 
 
 type _DocList = list[StoredDocument]

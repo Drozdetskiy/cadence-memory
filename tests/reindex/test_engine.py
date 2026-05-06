@@ -721,6 +721,32 @@ def test_query_returns_chunk_after_reindex(tmp_path: Path) -> None:
         store.close()
 
 
+def test_reindex_populates_chunk_summary(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(
+            project_dir / "guide.md",
+            "# Guide\n\n"
+            "This guide explains how the deployment pipeline orchestrates "
+            "kubernetes manifests across staging and production environments.\n",
+        )
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+
+        stored_chunks = store.get_chunks("proj:guide.md")
+        assert stored_chunks, "expected at least one persisted chunk"
+        assert any(
+            chunk.summary is not None and "deployment pipeline" in chunk.summary.lower()
+            for chunk in stored_chunks
+        )
+    finally:
+        store.close()
+
+
 def test_reindex_uses_api_spec_chunker_for_api_spec_kind(tmp_path: Path) -> None:
     store_dir, project_dir, _db, store = _setup(tmp_path)
     try:

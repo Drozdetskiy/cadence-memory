@@ -50,8 +50,12 @@ def _make_doc(
     )
 
 
-def _whole_body_chunk(body: str) -> Chunk:
-    return Chunk(slug="_preamble", heading_path=(), body=body, order=0)
+def _whole_body_chunk(
+    body: str,
+    *,
+    summary: str | None = "a meaningful summary phrase",
+) -> Chunk:
+    return Chunk(slug="_preamble", heading_path=(), body=body, order=0, summary=summary)
 
 
 def test_upsert_and_get_round_trip(tmp_path: Path) -> None:
@@ -444,6 +448,68 @@ def test_all_ids_returns_full_set(tmp_path: Path) -> None:
         for doc_id in ids:
             store.upsert(_make_doc(id=doc_id))
         assert store.all_ids() == set(ids)
+    finally:
+        store.close()
+
+
+def test_upsert_chunks_round_trips_summary(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        doc = _make_doc(body="body content with summarytoken inside")
+        store.upsert(doc)
+        store.upsert_chunks(
+            doc.id,
+            [
+                Chunk(
+                    slug="_preamble",
+                    heading_path=(),
+                    body="body content with summarytoken inside",
+                    order=0,
+                    summary="a meaningful preview line",
+                ),
+            ],
+        )
+
+        got = store.get_chunks(doc.id)
+        assert len(got) == 1
+        assert got[0].summary == "a meaningful preview line"
+
+        single = store.get_chunk("proj:doc.md#_preamble")
+        assert single is not None
+        assert single.summary == "a meaningful preview line"
+
+        hits = store.query("summarytoken")
+        assert len(hits) == 1
+        assert hits[0].summary == "a meaningful preview line"
+    finally:
+        store.close()
+
+
+def test_upsert_chunks_allows_null_summary(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        doc = _make_doc(body="trivial")
+        store.upsert(doc)
+        store.upsert_chunks(
+            doc.id,
+            [
+                Chunk(
+                    slug="_preamble",
+                    heading_path=(),
+                    body="trivial",
+                    order=0,
+                    summary=None,
+                ),
+            ],
+        )
+
+        got = store.get_chunks(doc.id)
+        assert len(got) == 1
+        assert got[0].summary is None
+
+        single = store.get_chunk("proj:doc.md#_preamble")
+        assert single is not None
+        assert single.summary is None
     finally:
         store.close()
 

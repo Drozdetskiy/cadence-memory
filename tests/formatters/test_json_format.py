@@ -122,6 +122,7 @@ def _make_chunk(
     document_title: str = "Title",
     document_kind: str = "doc",
     document_project: str | None = "proj",
+    summary: str | None = None,
 ) -> StoredChunk:
     return StoredChunk(
         id=chunk_id,
@@ -134,6 +135,7 @@ def _make_chunk(
         document_title=document_title,
         document_kind=document_kind,
         document_project=document_project,
+        summary=summary,
     )
 
 
@@ -164,6 +166,7 @@ def test_format_chunks_includes_expected_fields() -> None:
         "project",
         "heading_path",
         "slug",
+        "summary",
         "snippet",
     }
     assert parsed[0]["heading_path"] == ["Overview"]
@@ -214,6 +217,34 @@ def test_format_chunk_returns_json_object() -> None:
 
     assert isinstance(parsed, dict)
     assert parsed["chunk_id"] == chunk.id
+
+
+def test_format_chunks_surfaces_summary_when_present() -> None:
+    chunks = [_make_chunk(summary="a meaningful summary phrase")]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["summary"] == "a meaningful summary phrase"
+    assert "snippet" in parsed[0]
+
+
+def test_format_chunks_summary_falls_back_to_body_slice_when_none() -> None:
+    body = "X" * 500
+    chunks = [_make_chunk(body=body, summary=None)]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["summary"] is not None
+    assert parsed[0]["summary"] == "X" * 200
+    assert parsed[0]["snippet"] == "X" * 200
+
+
+def test_format_chunk_includes_summary_key() -> None:
+    chunk = _make_chunk(summary="explicit summary text")
+
+    parsed = json.loads(format_chunk(chunk, format="json"))
+
+    assert parsed["summary"] == "explicit summary text"
 
 
 def test_format_documents_preserves_all_metadata_fields() -> None:

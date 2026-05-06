@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 
 DOCUMENTS_DDL = """
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     body TEXT NOT NULL,
     chunk_order INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
+    summary TEXT,
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 )
 """
@@ -95,3 +97,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(DISCOVER_CACHE_DDL)
         for stmt in INDEX_DDL:
             conn.execute(stmt)
+        chunk_columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+        if "summary" not in chunk_columns:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE chunks ADD COLUMN summary TEXT")

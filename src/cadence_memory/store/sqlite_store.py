@@ -108,9 +108,7 @@ class SqliteStore:
     def delete(self, doc_id: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-            self._conn.execute(
-                "DELETE FROM documents_fts WHERE document_id = ?", (doc_id,)
-            )
+            self._conn.execute("DELETE FROM documents_fts WHERE document_id = ?", (doc_id,))
 
     def get(self, doc_id: str) -> StoredDocument | None:
         row = self._conn.execute(
@@ -171,17 +169,11 @@ class SqliteStore:
         tags_blob = " ".join(cast(str, r[0]) for r in tag_rows)
 
         with self._conn:
-            self._conn.execute(
-                "DELETE FROM chunks WHERE document_id = ?", (document_id,)
-            )
-            self._conn.execute(
-                "DELETE FROM documents_fts WHERE document_id = ?", (document_id,)
-            )
+            self._conn.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
+            self._conn.execute("DELETE FROM documents_fts WHERE document_id = ?", (document_id,))
             for chunk in chunks:
                 chunk_id = f"{document_id}#{chunk.slug}"
-                heading_path_json = json.dumps(
-                    list(chunk.heading_path), ensure_ascii=False
-                )
+                heading_path_json = json.dumps(list(chunk.heading_path), ensure_ascii=False)
                 content_hash = hashlib.sha256(
                     (chunk.slug + "\n" + chunk.body).encode("utf-8")
                 ).hexdigest()
@@ -189,8 +181,8 @@ class SqliteStore:
                     """
                     INSERT INTO chunks (
                         id, document_id, slug, heading_path, body,
-                        chunk_order, content_hash
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        chunk_order, content_hash, summary
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chunk_id,
@@ -200,6 +192,7 @@ class SqliteStore:
                         chunk.body,
                         chunk.order,
                         content_hash,
+                        chunk.summary,
                     ),
                 )
                 heading_path_fts = " ".join(chunk.heading_path)
@@ -224,7 +217,7 @@ class SqliteStore:
             """
             SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
                    c.chunk_order, c.content_hash,
-                   d.title, d.kind, d.project
+                   d.title, d.kind, d.project, c.summary
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE c.document_id = ?
@@ -239,7 +232,7 @@ class SqliteStore:
             """
             SELECT c.id, c.document_id, c.slug, c.heading_path, c.body,
                    c.chunk_order, c.content_hash,
-                   d.title, d.kind, d.project
+                   d.title, d.kind, d.project, c.summary
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE c.id = ?
@@ -269,7 +262,7 @@ class SqliteStore:
         sql = (
             "SELECT c.id, c.document_id, c.slug, c.heading_path, c.body, "
             "c.chunk_order, c.content_hash, "
-            "d.title, d.kind, d.project "
+            "d.title, d.kind, d.project, c.summary "
             "FROM documents_fts "
             "JOIN chunks c ON c.id = documents_fts.chunk_id "
             "JOIN documents d ON d.id = c.document_id "
@@ -361,4 +354,5 @@ class SqliteStore:
             document_title=cast(str, row[7]),
             document_kind=cast(str, row[8]),
             document_project=cast("str | None", row[9]),
+            summary=cast("str | None", row[10]),
         )

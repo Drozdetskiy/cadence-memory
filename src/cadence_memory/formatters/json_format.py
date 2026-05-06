@@ -48,6 +48,7 @@ def _chunk_snippet(body: str) -> str:
 
 
 def _chunk_to_dict(chunk: StoredChunk) -> dict[str, Any]:
+    summary = chunk.summary if chunk.summary is not None else _chunk_snippet(chunk.body)
     return {
         "chunk_id": chunk.id,
         "document_id": chunk.document_id,
@@ -56,6 +57,7 @@ def _chunk_to_dict(chunk: StoredChunk) -> dict[str, Any]:
         "project": chunk.document_project,
         "heading_path": list(chunk.heading_path),
         "slug": chunk.slug,
+        "summary": summary,
         "snippet": _chunk_snippet(chunk.body),
     }
 
