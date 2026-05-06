@@ -160,7 +160,7 @@ def add(
         indexed_at=now().isoformat(),
     )
     store.upsert(doc)
-    store.upsert_chunks(doc.id, chunk_markdown(doc.body))
+    store.upsert_chunks(doc.id, chunk_markdown(doc.body, kind=merged.kind, doc_id=doc.id))
     return doc
 
 

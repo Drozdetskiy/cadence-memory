@@ -260,6 +260,28 @@ def test_slugify_invalid_raises(tmp_path: Path) -> None:
     store.close()
 
 
+def test_add_api_spec_kind_routes_chunker(tmp_path: Path) -> None:
+    store_dir, store = _make_store(tmp_path)
+    src = tmp_path / "spec.md"
+    src.write_text(
+        "# Spec\n\nIntro.\n\n## GET /v1/foo\n\nfoo endpoint.\n\n## Schemas\n\nschema body.\n",
+        encoding="utf-8",
+    )
+
+    ephemeral.add(
+        EphemeralAddOptions(source=src, kind="api-spec"),
+        store=store,
+        store_dir=store_dir,
+    )
+
+    chunks = store.get_chunks("eph:spec")
+    slugs = [chunk.slug for chunk in chunks]
+    assert "_preamble" in slugs
+    assert "get-v1-foo" in slugs
+    assert "_schemas" in slugs
+    store.close()
+
+
 def test_add_makes_ephemeral_searchable(tmp_path: Path) -> None:
     store_dir, store = _make_store(tmp_path)
     src = tmp_path / "searchme.md"

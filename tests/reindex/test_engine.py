@@ -721,6 +721,42 @@ def test_query_returns_chunk_after_reindex(tmp_path: Path) -> None:
         store.close()
 
 
+def test_reindex_uses_api_spec_chunker_for_api_spec_kind(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        body = (
+            "# Billing API\n\nIntro paragraph.\n\n"
+            "## GET /v1/foo\n\nfoo endpoint.\n\n"
+            "## POST /v1/bar\n\nbar endpoint.\n\n"
+            "## Schemas\n\nschema body.\n"
+        )
+        _write(project_dir / "openapi.md", body)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(
+                _entry(
+                    id="proj:openapi.md",
+                    project="proj",
+                    path="openapi.md",
+                    kind="api-spec",
+                ),
+            )
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+
+        assert len(store.upsert_chunks_calls) == 1
+        chunked_id, chunks = store.upsert_chunks_calls[0]
+        assert chunked_id == "proj:openapi.md"
+        slugs = [chunk.slug for chunk in chunks]
+        assert "_preamble" in slugs
+        assert "get-v1-foo" in slugs
+        assert "post-v1-bar" in slugs
+        assert "_schemas" in slugs
+    finally:
+        store.close()
+
+
 def test_entry_removed_clears_chunks(tmp_path: Path) -> None:
     store_dir, project_dir, _db, store = _setup(tmp_path)
     try:

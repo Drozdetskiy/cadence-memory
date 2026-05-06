@@ -134,6 +134,47 @@ def test_load_config_invalid_kind() -> None:
     assert "not_a_real_kind" in msg
 
 
+def test_load_config_kind_rules_accepts_api_spec(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "projects:\n"
+            "  - name: billing\n"
+            "    path: /tmp/a\n"
+            "    discover:\n"
+            "      kind_rules:\n"
+            '        - pattern: "**/openapi.md"\n'
+            "          kind: api-spec\n"
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.projects[0].discover.kind_rules == (
+        KindRule(pattern="**/openapi.md", kind="api-spec"),
+    )
+
+
+def test_load_config_kind_rules_rejects_unknown_kind(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "projects:\n"
+            "  - name: billing\n"
+            "    path: /tmp/a\n"
+            "    discover:\n"
+            "      kind_rules:\n"
+            '        - pattern: "**/foo.md"\n'
+            "          kind: nonsense\n"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "kind_rules[0].kind" in msg
+    assert "nonsense" in msg
+
+
 def test_load_config_malformed_yaml() -> None:
     fixture = _fixture("config_malformed.yaml")
     with pytest.raises(ConfigError) as exc_info:
