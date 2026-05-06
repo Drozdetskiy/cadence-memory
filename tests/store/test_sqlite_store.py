@@ -125,15 +125,15 @@ def test_upsert_refreshes_fts_title_and_tags(tmp_path: Path) -> None:
         store.upsert(doc)
         store.upsert_chunks(doc.id, [_whole_body_chunk("body")])
 
-        assert {c.document_id for c in store.query("OriginalTitle")} == {doc.id}
-        assert {c.document_id for c in store.query("origtag")} == {doc.id}
+        assert {c.document_id for c in store.query(["OriginalTitle"])} == {doc.id}
+        assert {c.document_id for c in store.query(["origtag"])} == {doc.id}
 
         store.upsert(_make_doc(title="RenamedTitle", tags=("newtag",)))
 
-        assert store.query("OriginalTitle") == []
-        assert store.query("origtag") == []
-        assert {c.document_id for c in store.query("RenamedTitle")} == {doc.id}
-        assert {c.document_id for c in store.query("newtag")} == {doc.id}
+        assert store.query(["OriginalTitle"]) == []
+        assert store.query(["origtag"]) == []
+        assert {c.document_id for c in store.query(["RenamedTitle"])} == {doc.id}
+        assert {c.document_id for c in store.query(["newtag"])} == {doc.id}
     finally:
         store.close()
 
@@ -200,7 +200,7 @@ def test_delete_does_not_touch_other_documents(tmp_path: Path) -> None:
         survivor = store.get(keep.id)
         assert survivor == keep
 
-        hits = store.query("keepertoken")
+        hits = store.query(["keepertoken"])
         assert {c.document_id for c in hits} == {"proj:keep.md"}
     finally:
         store.close()
@@ -380,7 +380,7 @@ def test_query_returns_stored_chunks_with_denormalised_doc_fields(tmp_path: Path
             store.upsert(d)
             store.upsert_chunks(d.id, [_whole_body_chunk(d.body)])
 
-        all_token = store.query("tokens")
+        all_token = store.query(["tokens"])
         assert {c.document_id for c in all_token} == {
             "alpha:auth.md",
             "alpha:db.md",
@@ -391,19 +391,19 @@ def test_query_returns_stored_chunks_with_denormalised_doc_fields(tmp_path: Path
         assert sample.document_kind == "pattern"
         assert sample.document_project == "alpha"
 
-        by_tag = store.query("security")
+        by_tag = store.query(["security"])
         assert {c.document_id for c in by_tag} == {"alpha:auth.md", "beta:auth.md"}
 
-        by_kind = store.query("tokens", kind="pattern")
+        by_kind = store.query(["tokens"], kind="pattern")
         assert {c.document_id for c in by_kind} == {"alpha:auth.md", "beta:auth.md"}
 
-        by_project = store.query("tokens", project="alpha")
+        by_project = store.query(["tokens"], project="alpha")
         assert {c.document_id for c in by_project} == {"alpha:auth.md", "alpha:db.md"}
 
-        limited = store.query("tokens", limit=1)
+        limited = store.query(["tokens"], limit=1)
         assert len(limited) == 1
 
-        empty = store.query("nonexistentterm")
+        empty = store.query(["nonexistentterm"])
         assert empty == []
     finally:
         store.close()
@@ -434,7 +434,7 @@ def test_query_returns_per_chunk_hits_for_same_document(tmp_path: Path) -> None:
             ],
         )
 
-        hits = store.query("uniqterm")
+        hits = store.query(["uniqterm"])
         assert len(hits) == 2
         assert {c.slug for c in hits} == {"_preamble", "other"}
     finally:
@@ -478,7 +478,7 @@ def test_upsert_chunks_round_trips_summary(tmp_path: Path) -> None:
         assert single is not None
         assert single.summary == "a meaningful preview line"
 
-        hits = store.query("summarytoken")
+        hits = store.query(["summarytoken"])
         assert len(hits) == 1
         assert hits[0].summary == "a meaningful preview line"
     finally:
@@ -548,12 +548,12 @@ def test_fts_query_matches_enrichment_text(tmp_path: Path) -> None:
         )
         store.upsert_chunk_enrichment("proj:webhook.md#_preamble", "вебхук notifications")
 
-        hits = store.query("вебхук")
+        hits = store.query(["вебхук"])
         assert {c.id for c in hits} == {"proj:webhook.md#_preamble"}
         assert hits[0].enrichment == "вебхук notifications"
 
         # body terms still match
-        body_hits = store.query("events")
+        body_hits = store.query(["events"])
         assert {c.id for c in body_hits} == {"proj:webhook.md#_preamble"}
     finally:
         store.close()
@@ -587,6 +587,42 @@ def test_enrichment_cache_get_put_round_trip(tmp_path: Path) -> None:
         replaced = store.enrichment_cache_get("h1")
         assert replaced is not None
         assert replaced["enrichment_json"] == '{"keywords": ["y"]}'
+    finally:
+        store.close()
+
+
+def test_expansion_cache_get_put_round_trip(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        assert store.expansion_cache_get("вебхуки", "claude-haiku-4-5") is None
+
+        store.expansion_cache_put(
+            query_text="вебхуки",
+            model="claude-haiku-4-5",
+            variants_json='["webhooks", "callbacks"]',
+            generated_at="2026-01-02T00:00:00+00:00",
+        )
+
+        got = store.expansion_cache_get("вебхуки", "claude-haiku-4-5")
+        assert got is not None
+        assert got["variants_json"] == '["webhooks", "callbacks"]'
+        assert got["model"] == "claude-haiku-4-5"
+        assert got["generated_at"] == "2026-01-02T00:00:00+00:00"
+
+        # different model is a different row
+        assert store.expansion_cache_get("вебхуки", "claude-sonnet-4-6") is None
+
+        # INSERT OR REPLACE on same (query_text, model)
+        store.expansion_cache_put(
+            query_text="вебхуки",
+            model="claude-haiku-4-5",
+            variants_json='["webhook", "callback hook"]',
+            generated_at="2026-01-03T00:00:00+00:00",
+        )
+        replaced = store.expansion_cache_get("вебхуки", "claude-haiku-4-5")
+        assert replaced is not None
+        assert replaced["variants_json"] == '["webhook", "callback hook"]'
+        assert replaced["generated_at"] == "2026-01-03T00:00:00+00:00"
     finally:
         store.close()
 
@@ -705,10 +741,10 @@ def test_legacy_store_without_enrichment_column_is_migrated(tmp_path: Path) -> N
         assert "enrichment" in fts_columns
 
         # body and tags still searchable after migration
-        body_hits = store.query("legacytoken")
+        body_hits = store.query(["legacytoken"])
         assert {c.id for c in body_hits} == {"proj:legacy.md#_preamble"}
 
-        tag_hits = store.query("legacytag")
+        tag_hits = store.query(["legacytag"])
         assert {c.id for c in tag_hits} == {"proj:legacy.md#_preamble"}
 
         # enrichment_cache table is now present

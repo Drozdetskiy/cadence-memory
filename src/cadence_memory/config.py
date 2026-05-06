@@ -59,6 +59,18 @@ class EnrichmentConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ExpansionConfig:
+    enabled: bool = True
+    model: str | None = None
+    max_variants: int = 3
+
+
+@dataclass(frozen=True, slots=True)
+class QueryConfig:
+    expansion: ExpansionConfig = ExpansionConfig()
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     projects: tuple[ProjectConfig, ...]
     globals: GlobalsConfig
@@ -66,11 +78,17 @@ class Config:
     commit_index: bool
     claude: ClaudeConfig = ClaudeConfig()
     enrichment: EnrichmentConfig = EnrichmentConfig()
+    query: QueryConfig = QueryConfig()
 
 
 def effective_enrichment_model(config: Config) -> str:
     """Return enrichment model: explicit override or claude.default_model fallback."""
     return config.enrichment.model or config.claude.default_model
+
+
+def effective_expansion_model(config: Config) -> str:
+    """Return query-expansion model: explicit override or claude.default_model fallback."""
+    return config.query.expansion.model or config.claude.default_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +113,7 @@ _VALID_KINDS: Final[frozenset[str]] = frozenset(
     {"service", "pattern", "adr", "glossary", "task", "doc", "api-spec"}
 )
 _TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset(
-    {"projects", "globals", "defaults", "commit_index", "claude", "enrichment"}
+    {"projects", "globals", "defaults", "commit_index", "claude", "enrichment", "query"}
 )
 _PROJECT_KEYS: Final[frozenset[str]] = frozenset({"name", "path", "exclude", "discover"})
 _DISCOVER_KEYS: Final[frozenset[str]] = frozenset({"kind_rules"})
@@ -104,6 +122,8 @@ _GLOBALS_KEYS: Final[frozenset[str]] = frozenset({"include", "exclude"})
 _DEFAULTS_KEYS: Final[frozenset[str]] = frozenset({"kind"})
 _CLAUDE_KEYS: Final[frozenset[str]] = frozenset({"default_model"})
 _ENRICHMENT_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model"})
+_QUERY_KEYS: Final[frozenset[str]] = frozenset({"expansion"})
+_EXPANSION_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model", "max_variants"})
 _ANNOTATIONS_TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset({"documents"})
 _DOCUMENT_KEYS: Final[frozenset[str]] = frozenset(
     {"id", "project", "path", "kind", "title", "tags", "related", "optional"}
@@ -319,6 +339,65 @@ def _parse_enrichment(prefix: str, data: object) -> EnrichmentConfig:
     return EnrichmentConfig(enabled=enabled, model=model)
 
 
+def _parse_expansion(prefix: str, data: object) -> ExpansionConfig:
+    if data is None:
+        return ExpansionConfig()
+    if not isinstance(data, dict):
+        raise _err(
+            prefix,
+            "query.expansion",
+            f"must be a mapping, got {type(data).__name__}",
+        )
+    typed = _as_str_keyed_dict(prefix, "query.expansion", data)
+    _check_unknown_keys(prefix, "query.expansion", typed, _EXPANSION_KEYS)
+
+    enabled_raw = typed.get("enabled")
+    if enabled_raw is None:
+        enabled = True
+    elif isinstance(enabled_raw, bool):
+        enabled = enabled_raw
+    else:
+        raise _err(
+            prefix,
+            "query.expansion.enabled",
+            f"must be a boolean, got {type(enabled_raw).__name__}",
+        )
+
+    model_raw = typed.get("model")
+    model = None if model_raw is None else _require_str(prefix, "query.expansion.model", model_raw)
+
+    max_variants_raw = typed.get("max_variants")
+    if max_variants_raw is None:
+        max_variants = 3
+    elif isinstance(max_variants_raw, bool) or not isinstance(max_variants_raw, int):
+        raise _err(
+            prefix,
+            "query.expansion.max_variants",
+            f"must be an integer, got {type(max_variants_raw).__name__}",
+        )
+    elif max_variants_raw <= 0:
+        raise _err(
+            prefix,
+            "query.expansion.max_variants",
+            f"must be a positive integer, got {max_variants_raw}",
+        )
+    else:
+        max_variants = max_variants_raw
+
+    return ExpansionConfig(enabled=enabled, model=model, max_variants=max_variants)
+
+
+def _parse_query(prefix: str, data: object) -> QueryConfig:
+    if data is None:
+        return QueryConfig()
+    if not isinstance(data, dict):
+        raise _err(prefix, "query", f"must be a mapping, got {type(data).__name__}")
+    typed = _as_str_keyed_dict(prefix, "query", data)
+    _check_unknown_keys(prefix, "query", typed, _QUERY_KEYS)
+    expansion = _parse_expansion(prefix, typed.get("expansion"))
+    return QueryConfig(expansion=expansion)
+
+
 def _parse_defaults(prefix: str, data: object) -> Defaults:
     if data is None:
         return Defaults(kind=_DEFAULT_KIND)
@@ -394,6 +473,7 @@ def load_config(path: Path) -> Config:
 
     claude_cfg = _parse_claude(prefix, typed.get("claude"))
     enrichment_cfg = _parse_enrichment(prefix, typed.get("enrichment"))
+    query_cfg = _parse_query(prefix, typed.get("query"))
 
     return Config(
         projects=projects,
@@ -402,6 +482,7 @@ def load_config(path: Path) -> Config:
         commit_index=commit_index,
         claude=claude_cfg,
         enrichment=enrichment_cfg,
+        query=query_cfg,
     )
 
 

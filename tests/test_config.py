@@ -17,10 +17,13 @@ from cadence_memory.config import (
     DiscoverConfig,
     DocumentEntry,
     EnrichmentConfig,
+    ExpansionConfig,
     GlobalsConfig,
     KindRule,
     ProjectConfig,
+    QueryConfig,
     effective_enrichment_model,
+    effective_expansion_model,
     load_annotations_config,
     load_config,
 )
@@ -837,6 +840,160 @@ def test_load_config_claude_default_model_must_be_string(tmp_path: Path) -> None
 
 
 # --------------------------------------------------------------------------- #
+# query.expansion section                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_load_config_query_expansion_defaults_when_absent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: []\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.query == QueryConfig(
+        expansion=ExpansionConfig(enabled=True, model=None, max_variants=3),
+    )
+    assert effective_expansion_model(cfg) == "claude-haiku-4-5"
+
+
+def test_load_config_query_expansion_disabled_round_trip(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.expansion.enabled is False
+    assert cfg.query.expansion.model is None
+    assert cfg.query.expansion.max_variants == 3
+
+
+def test_load_config_query_expansion_explicit_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "query:\n"
+            "  expansion:\n"
+            "    enabled: true\n"
+            "    model: claude-sonnet-4-6\n"
+            "    max_variants: 5\n"
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.expansion == ExpansionConfig(
+        enabled=True, model="claude-sonnet-4-6", max_variants=5
+    )
+    assert effective_expansion_model(cfg) == "claude-sonnet-4-6"
+
+
+def test_load_config_query_expansion_null_model_falls_back(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "claude:\n"
+            "  default_model: claude-haiku-foo\n"
+            "query:\n"
+            "  expansion:\n"
+            "    enabled: true\n"
+            "    model: null\n"
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.expansion.model is None
+    assert effective_expansion_model(cfg) == "claude-haiku-foo"
+
+
+def test_load_config_query_unknown_key_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("query:\n  bogus: 1\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "query.bogus" in msg
+    assert "not a known key" in msg
+
+
+def test_load_config_query_expansion_unknown_key_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    bogus: 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "query.expansion.bogus" in msg
+    assert "not a known key" in msg
+
+
+def test_load_config_query_must_be_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("query: not-a-mapping\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"query must be a mapping"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_must_be_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion: not-a-mapping\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion must be a mapping"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_enabled_must_be_bool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    enabled: maybe\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion\.enabled"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_model_must_be_string(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    model: 42\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion\.model"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_max_variants_must_be_int(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    max_variants: many\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion\.max_variants"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_max_variants_must_be_positive(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    max_variants: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion\.max_variants"):
+        load_config(config_path)
+
+
+def test_load_config_query_expansion_max_variants_rejects_bool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  expansion:\n    max_variants: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.expansion\.max_variants"):
+        load_config(config_path)
+
+
+# --------------------------------------------------------------------------- #
 # Embedded default templates copied by `cadence-memory init`                  #
 # --------------------------------------------------------------------------- #
 
@@ -861,6 +1018,10 @@ def test_default_config_template_loads(tmp_path: Path) -> None:
     assert cfg.claude == ClaudeConfig(default_model="claude-haiku-4-5")
     assert cfg.enrichment == EnrichmentConfig(enabled=True, model=None)
     assert effective_enrichment_model(cfg) == "claude-haiku-4-5"
+    assert cfg.query == QueryConfig(
+        expansion=ExpansionConfig(enabled=True, model=None, max_variants=3),
+    )
+    assert effective_expansion_model(cfg) == "claude-haiku-4-5"
 
 
 def test_default_annotations_template_loads(tmp_path: Path) -> None:

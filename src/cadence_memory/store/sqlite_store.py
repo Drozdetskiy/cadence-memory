@@ -13,6 +13,7 @@ from typing import Literal, cast
 from cadence_memory.documents.chunker import Chunk
 from cadence_memory.documents.hashes import chunk_content_hash
 from cadence_memory.query.identifiers import QueryIdentifiers, extract_identifiers
+from cadence_memory.query.rrf import reciprocal_rank_fusion
 from cadence_memory.store.interface import Mention, MentionKind, StoredChunk, StoredDocument
 from cadence_memory.store.schema import init_schema
 
@@ -26,6 +27,8 @@ _BOOST_PER_KIND: float = 5.0
 type _DocList = list[StoredDocument]
 type _ChunkList = list[StoredChunk]
 type _MentionList = list[Mention]
+type _FtsRow = tuple[object, ...]
+type _FtsRowList = list[_FtsRow]
 
 
 class SqliteStore:
@@ -250,13 +253,115 @@ class SqliteStore:
 
     def query(
         self,
-        text: str,
+        queries: Sequence[str],
         *,
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
         boost: bool = True,
     ) -> _ChunkList:
+        if not queries:
+            raise ValueError("queries must be non-empty")
+        if len(queries) == 1:
+            return self._query_single(
+                queries[0], kind=kind, project=project, limit=limit, boost=boost
+            )
+        return self._query_multi(queries, kind=kind, project=project, limit=limit, boost=boost)
+
+    def _query_single(
+        self,
+        text: str,
+        *,
+        kind: str | None,
+        project: str | None,
+        limit: int,
+        boost: bool,
+    ) -> _ChunkList:
+        rows = self._fts_rows(text, kind=kind, project=project, limit=limit * 2)
+
+        ids = extract_identifiers(text)
+        if not boost or ids.is_empty() or not rows:
+            ranked = sorted(rows, key=lambda r: cast(float, r[12]))[:limit]
+            return [
+                self._row_to_chunk(row, score=cast(float, row[12]), score_boost=0.0)
+                for row in ranked
+            ]
+
+        chunk_ids = [cast(str, row[0]) for row in rows]
+        kind_hits: dict[str, set[str]] = {cid: set() for cid in chunk_ids}
+        self._collect_mention_hits(chunk_ids, ids, kind_hits)
+        self._collect_substring_hits(chunk_ids, ids, kind_hits)
+
+        scored: list[tuple[_FtsRow, float, float]] = []
+        for row in rows:
+            cid = cast(str, row[0])
+            base = cast(float, row[12])
+            boost_value = _BOOST_PER_KIND * len(kind_hits[cid])
+            scored.append((row, base, boost_value))
+        scored.sort(key=lambda item: item[1] - item[2])
+        top = scored[:limit]
+        return [
+            self._row_to_chunk(row, score=base, score_boost=boost_value)
+            for row, base, boost_value in top
+        ]
+
+    def _query_multi(
+        self,
+        queries: Sequence[str],
+        *,
+        kind: str | None,
+        project: str | None,
+        limit: int,
+        boost: bool,
+    ) -> _ChunkList:
+        rankings: list[list[str]] = []
+        rows_by_id: dict[str, _FtsRow] = {}
+        for idx, query_text in enumerate(queries):
+            try:
+                rows = self._fts_rows(query_text, kind=kind, project=project, limit=limit * 2)
+            except sqlite3.OperationalError:
+                if idx == 0:
+                    raise
+                continue
+            rankings.append([cast(str, row[0]) for row in rows])
+            for row in rows:
+                cid = cast(str, row[0])
+                if cid not in rows_by_id:
+                    rows_by_id[cid] = row
+
+        if not rows_by_id:
+            return []
+
+        fused = reciprocal_rank_fusion(rankings)
+
+        chunk_ids = [cid for cid, _ in fused]
+        kind_hits: dict[str, set[str]] = {cid: set() for cid in chunk_ids}
+        if boost:
+            ids = extract_identifiers(queries[0])
+            if not ids.is_empty():
+                self._collect_mention_hits(chunk_ids, ids, kind_hits)
+                self._collect_substring_hits(chunk_ids, ids, kind_hits)
+
+        scored: list[tuple[_FtsRow, float, float]] = []
+        for cid, rrf_score in fused:
+            row = rows_by_id[cid]
+            boost_value = _BOOST_PER_KIND * len(kind_hits[cid])
+            scored.append((row, rrf_score, boost_value))
+        scored.sort(key=lambda item: -(item[1] + item[2]))
+        top = scored[:limit]
+        return [
+            self._row_to_chunk(row, score=rrf_score, score_boost=boost_value)
+            for row, rrf_score, boost_value in top
+        ]
+
+    def _fts_rows(
+        self,
+        text: str,
+        *,
+        kind: str | None,
+        project: str | None,
+        limit: int,
+    ) -> _FtsRowList:
         clauses: list[str] = ["documents_fts MATCH ?"]
         params: list[object] = [text]
         if kind is not None:
@@ -277,34 +382,8 @@ class SqliteStore:
             "ORDER BY rank "
             "LIMIT ?"
         )
-        params.append(limit * 2)
-        rows = self._conn.execute(sql, params).fetchall()
-
-        ids = extract_identifiers(text)
-        if not boost or ids.is_empty() or not rows:
-            ranked = sorted(rows, key=lambda r: cast(float, r[12]))[:limit]
-            return [
-                self._row_to_chunk(row, score=cast(float, row[12]), score_boost=0.0)
-                for row in ranked
-            ]
-
-        chunk_ids = [cast(str, row[0]) for row in rows]
-        kind_hits: dict[str, set[str]] = {cid: set() for cid in chunk_ids}
-        self._collect_mention_hits(chunk_ids, ids, kind_hits)
-        self._collect_substring_hits(chunk_ids, ids, kind_hits)
-
-        scored: list[tuple[tuple[object, ...], float, float]] = []
-        for row in rows:
-            cid = cast(str, row[0])
-            base = cast(float, row[12])
-            boost_value = _BOOST_PER_KIND * len(kind_hits[cid])
-            scored.append((row, base, boost_value))
-        scored.sort(key=lambda item: item[1] - item[2])
-        top = scored[:limit]
-        return [
-            self._row_to_chunk(row, score=base, score_boost=boost_value)
-            for row, base, boost_value in top
-        ]
+        params.append(limit)
+        return list(self._conn.execute(sql, params).fetchall())
 
     def _collect_mention_hits(
         self,
@@ -482,6 +561,36 @@ class SqliteStore:
                 "(content_hash, enrichment_json, model, generated_at) "
                 "VALUES (?, ?, ?, ?)",
                 (content_hash, enrichment_json, model, generated_at),
+            )
+
+    def expansion_cache_get(self, query_text: str, model: str) -> dict[str, object] | None:
+        row = self._conn.execute(
+            "SELECT variants_json, model, generated_at FROM query_expansion_cache "
+            "WHERE query_text = ? AND model = ?",
+            (query_text, model),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "variants_json": cast(str, row[0]),
+            "model": cast(str, row[1]),
+            "generated_at": cast(str, row[2]),
+        }
+
+    def expansion_cache_put(
+        self,
+        *,
+        query_text: str,
+        model: str,
+        variants_json: str,
+        generated_at: str,
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO query_expansion_cache "
+                "(query_text, model, variants_json, generated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (query_text, model, variants_json, generated_at),
             )
 
     def close(self) -> None:

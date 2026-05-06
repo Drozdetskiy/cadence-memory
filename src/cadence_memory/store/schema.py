@@ -89,6 +89,16 @@ CREATE TABLE IF NOT EXISTS enrichment_cache (
 )
 """
 
+QUERY_EXPANSION_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS query_expansion_cache (
+    query_text TEXT NOT NULL,
+    model TEXT NOT NULL,
+    variants_json TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    PRIMARY KEY (query_text, model)
+)
+"""
+
 MENTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS mentions (
     chunk_id TEXT NOT NULL,
@@ -120,6 +130,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(DOCUMENTS_FTS_DDL)
         conn.execute(DISCOVER_CACHE_DDL)
         conn.execute(ENRICHMENT_CACHE_DDL)
+        conn.execute(QUERY_EXPANSION_CACHE_DDL)
         conn.execute(MENTIONS_DDL)
         for stmt in INDEX_DDL:
             conn.execute(stmt)

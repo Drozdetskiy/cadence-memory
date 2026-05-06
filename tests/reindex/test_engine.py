@@ -119,13 +119,13 @@ class _CountingStore:
 
     def query(
         self,
-        text: str,
+        queries: Sequence[str],
         *,
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
     ) -> list[StoredChunk]:
-        return self.inner.query(text, kind=kind, project=project, limit=limit)
+        return self.inner.query(queries, kind=kind, project=project, limit=limit)
 
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()
@@ -291,9 +291,9 @@ def test_body_change_updates_content(tmp_path: Path) -> None:
         assert got is not None
         assert got.body == "# Title\n\nnew body content\n"
 
-        hits = store.query("body content")
+        hits = store.query(["body content"])
         assert any(h.document_id == "proj:README.md" for h in hits)
-        old_hits = store.query("old")
+        old_hits = store.query(["old"])
         assert all(h.document_id != "proj:README.md" for h in old_hits)
     finally:
         store.close()
@@ -797,7 +797,7 @@ def test_query_returns_chunk_after_reindex(tmp_path: Path) -> None:
 
         reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
 
-        hits = store.query("kubernetes manifests")
+        hits = store.query(["kubernetes manifests"])
         assert len(hits) >= 1
         assert any(h.document_id == "proj:guide.md" for h in hits)
         deployment_hit = next(h for h in hits if h.document_id == "proj:guide.md")
@@ -952,7 +952,7 @@ def test_reindex_with_enricher_populates_chunks_and_fts(tmp_path: Path) -> None:
             chunk.enrichment is not None and "вебхук" in chunk.enrichment for chunk in stored_chunks
         )
 
-        hits = store.query("вебхук")
+        hits = store.query(["вебхук"])
         assert any(h.document_id == "proj:guide.md" for h in hits)
     finally:
         store.close()
@@ -1159,7 +1159,7 @@ def test_reindex_does_not_cache_failed_enrichment(tmp_path: Path) -> None:
         assert second.enriched_chunks >= 1
         assert second.enrichment_cache_hits == 0
         assert len(good.calls) >= 1
-        hits = store.query("вебхук")
+        hits = store.query(["вебхук"])
         assert any(h.document_id == "proj:b.md" for h in hits)
     finally:
         store.close()
@@ -1212,7 +1212,7 @@ def test_reindex_skips_cache_when_model_differs(tmp_path: Path) -> None:
         assert second.enriched_chunks >= 1
         assert second.enrichment_cache_hits == 0
         # The new model's keyword should be searchable on the new doc.
-        sonnet_hits = store.query("вебхуксоннет")
+        sonnet_hits = store.query(["вебхуксоннет"])
         assert any(h.document_id == "proj:b.md" for h in sonnet_hits)
     finally:
         store.close()
@@ -1262,7 +1262,7 @@ def test_no_enrichment_repopulates_chunks_from_cache(tmp_path: Path) -> None:
         # chunk's enrichment was restored from the cache.
         assert result.enriched_chunks == 0
         assert result.enrichment_cache_hits >= 1
-        cached_hits = store.query("вебхуккеш")
+        cached_hits = store.query(["вебхуккеш"])
         assert any(h.document_id == "proj:guide.md" for h in cached_hits)
     finally:
         store.close()

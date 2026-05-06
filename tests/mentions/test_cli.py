@@ -46,6 +46,7 @@ def _make_seeded_store(tmp_path: Path) -> tuple[Path, Path]:
         f"projects:\n  - name: proj\n    path: {project_dir}\n"
         "defaults:\n  kind: doc\n"
         "enrichment:\n  enabled: false\n"
+        "query:\n  expansion:\n    enabled: false\n"
     )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
 

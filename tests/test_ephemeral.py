@@ -292,7 +292,7 @@ def test_add_makes_ephemeral_searchable(tmp_path: Path) -> None:
 
     ephemeral.add(EphemeralAddOptions(source=src), store=store, store_dir=store_dir)
 
-    hits = store.query("zephyranthes")
+    hits = store.query(["zephyranthes"])
     assert hits
     assert {c.document_id for c in hits} == {"eph:searchme"}
     store.close()

@@ -83,3 +83,16 @@ claude:
 enrichment:
   enabled: true
   model: null
+
+# Query-time expansion: before searching, ask Claude to generate alternative
+# phrasings of the user's query (e.g. Russian technical terms → English
+# equivalents) and merge per-variant FTS rankings via reciprocal rank fusion.
+# Set `enabled: false` (or pass `--no-expand` to `query`) to skip the Claude
+# call entirely. `model: null` falls back to `claude.default_model`.
+# `max_variants` caps how many alternatives Claude is asked to produce.
+#
+# query:
+#   expansion:
+#     enabled: true
+#     model: null
+#     max_variants: 3

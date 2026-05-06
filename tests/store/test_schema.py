@@ -41,6 +41,7 @@ def test_init_schema_creates_all_tables(tmp_path: Path) -> None:
             "chunks",
             "documents_fts",
             "discover_cache",
+            "query_expansion_cache",
         ):
             assert expected in names
     finally:
@@ -150,6 +151,26 @@ def test_init_schema_creates_all_indexes(tmp_path: Path) -> None:
             "idx_discover_cache_path",
         ):
             assert expected in names
+    finally:
+        conn.close()
+
+
+def test_init_schema_creates_query_expansion_cache_table(tmp_path: Path) -> None:
+    conn = _open(tmp_path)
+    try:
+        init_schema(conn)
+        cols = {
+            row[1]: row[2]
+            for row in conn.execute("PRAGMA table_info(query_expansion_cache)").fetchall()
+        }
+        for expected in ("query_text", "model", "variants_json", "generated_at"):
+            assert expected in cols
+        pk_cols = sorted(
+            row[1]
+            for row in conn.execute("PRAGMA table_info(query_expansion_cache)").fetchall()
+            if row[5] > 0
+        )
+        assert pk_cols == ["model", "query_text"]
     finally:
         conn.close()
 
