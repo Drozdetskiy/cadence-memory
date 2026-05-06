@@ -123,6 +123,8 @@ def _make_chunk(
     document_kind: str = "doc",
     document_project: str | None = "proj",
     summary: str | None = None,
+    score: float = 0.0,
+    score_boost: float = 0.0,
 ) -> StoredChunk:
     return StoredChunk(
         id=chunk_id,
@@ -136,6 +138,8 @@ def _make_chunk(
         document_kind=document_kind,
         document_project=document_project,
         summary=summary,
+        score=score,
+        score_boost=score_boost,
     )
 
 
@@ -168,12 +172,16 @@ def test_format_chunks_includes_expected_fields() -> None:
         "slug",
         "summary",
         "snippet",
+        "score",
+        "score_boost",
     }
     assert parsed[0]["heading_path"] == ["Overview"]
     assert parsed[0]["kind"] == "doc"
     assert parsed[0]["title"] == "Title"
     assert parsed[0]["project"] == "proj"
     assert parsed[0]["slug"] == "overview"
+    assert parsed[0]["score"] == 0.0
+    assert parsed[0]["score_boost"] == 0.0
 
 
 def test_format_chunks_snippet_truncated_to_200_chars() -> None:
@@ -245,6 +253,24 @@ def test_format_chunk_includes_summary_key() -> None:
     parsed = json.loads(format_chunk(chunk, format="json"))
 
     assert parsed["summary"] == "explicit summary text"
+
+
+def test_format_chunks_surfaces_score_and_boost() -> None:
+    chunks = [_make_chunk(score=-3.5, score_boost=10.0)]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["score"] == -3.5
+    assert parsed[0]["score_boost"] == 10.0
+
+
+def test_format_chunk_surfaces_score_and_boost() -> None:
+    chunk = _make_chunk(score=-1.25, score_boost=5.0)
+
+    parsed = json.loads(format_chunk(chunk, format="json"))
+
+    assert parsed["score"] == -1.25
+    assert parsed["score_boost"] == 5.0
 
 
 def test_format_documents_preserves_all_metadata_fields() -> None:

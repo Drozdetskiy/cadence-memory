@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from typing import Literal, cast
 
 from cadence_memory.documents.chunker import Chunk
 from cadence_memory.documents.hashes import chunk_content_hash
+from cadence_memory.query.identifiers import QueryIdentifiers, extract_identifiers
 from cadence_memory.store.interface import Mention, MentionKind, StoredChunk, StoredDocument
 from cadence_memory.store.schema import init_schema
 
@@ -18,6 +20,8 @@ __all__ = ["SqliteStore"]
 
 
 _SourceType = Literal["project", "global", "ephemeral"]
+
+_BOOST_PER_KIND: float = 5.0
 
 type _DocList = list[StoredDocument]
 type _ChunkList = list[StoredChunk]
@@ -251,6 +255,7 @@ class SqliteStore:
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
+        boost: bool = True,
     ) -> _ChunkList:
         clauses: list[str] = ["documents_fts MATCH ?"]
         params: list[object] = [text]
@@ -263,7 +268,8 @@ class SqliteStore:
         sql = (
             "SELECT c.id, c.document_id, c.slug, c.heading_path, c.body, "
             "c.chunk_order, c.content_hash, "
-            "d.title, d.kind, d.project, c.summary, c.enrichment "
+            "d.title, d.kind, d.project, c.summary, c.enrichment, "
+            "bm25(documents_fts) AS score "
             "FROM documents_fts "
             "JOIN chunks c ON c.id = documents_fts.chunk_id "
             "JOIN documents d ON d.id = c.document_id "
@@ -271,9 +277,85 @@ class SqliteStore:
             "ORDER BY rank "
             "LIMIT ?"
         )
-        params.append(limit)
+        params.append(limit * 2)
         rows = self._conn.execute(sql, params).fetchall()
-        return [self._row_to_chunk(row) for row in rows]
+
+        ids = extract_identifiers(text)
+        if not boost or ids.is_empty() or not rows:
+            ranked = sorted(rows, key=lambda r: cast(float, r[12]))[:limit]
+            return [
+                self._row_to_chunk(row, score=cast(float, row[12]), score_boost=0.0)
+                for row in ranked
+            ]
+
+        chunk_ids = [cast(str, row[0]) for row in rows]
+        kind_hits: dict[str, set[str]] = {cid: set() for cid in chunk_ids}
+        self._collect_mention_hits(chunk_ids, ids, kind_hits)
+        self._collect_substring_hits(chunk_ids, ids, kind_hits)
+
+        scored: list[tuple[tuple[object, ...], float, float]] = []
+        for row in rows:
+            cid = cast(str, row[0])
+            base = cast(float, row[12])
+            boost_value = _BOOST_PER_KIND * len(kind_hits[cid])
+            scored.append((row, base, boost_value))
+        scored.sort(key=lambda item: item[1] - item[2])
+        top = scored[:limit]
+        return [
+            self._row_to_chunk(row, score=base, score_boost=boost_value)
+            for row, base, boost_value in top
+        ]
+
+    def _collect_mention_hits(
+        self,
+        chunk_ids: Sequence[str],
+        ids: QueryIdentifiers,
+        kind_hits: dict[str, set[str]],
+    ) -> None:
+        if not chunk_ids:
+            return
+        chunk_placeholders = ",".join("?" for _ in chunk_ids)
+        for target_kind, targets in (("schema", ids.schemas), ("endpoint", ids.endpoints)):
+            if not targets:
+                continue
+            target_placeholders = ",".join("?" for _ in targets)
+            sql = (
+                f"SELECT DISTINCT chunk_id FROM mentions "
+                f"WHERE chunk_id IN ({chunk_placeholders}) "
+                f"AND target_kind = ? "
+                f"AND target IN ({target_placeholders})"
+            )
+            params: list[object] = [*chunk_ids, target_kind, *targets]
+            for row in self._conn.execute(sql, params):
+                kind_hits[cast(str, row[0])].add(target_kind)
+
+    def _collect_substring_hits(
+        self,
+        chunk_ids: Sequence[str],
+        ids: QueryIdentifiers,
+        kind_hits: dict[str, set[str]],
+    ) -> None:
+        if not chunk_ids:
+            return
+        label_targets: list[tuple[str, tuple[str, ...]]] = [
+            ("jira", ids.jira),
+            ("release", ids.release),
+            ("acceptance", ids.acceptance),
+        ]
+        if not any(targets for _, targets in label_targets):
+            return
+        chunk_placeholders = ",".join("?" for _ in chunk_ids)
+        sql = f"SELECT id, body FROM chunks WHERE id IN ({chunk_placeholders})"
+        rows = self._conn.execute(sql, list(chunk_ids)).fetchall()
+        for label, targets in label_targets:
+            if not targets:
+                continue
+            patterns = [re.compile(r"\b" + re.escape(t) + r"\b") for t in targets]
+            for row in rows:
+                cid = cast(str, row[0])
+                body = cast(str, row[1])
+                if any(p.search(body) for p in patterns):
+                    kind_hits[cid].add(label)
 
     def all_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT id FROM documents").fetchall()
@@ -433,7 +515,13 @@ class SqliteStore:
             indexed_at=cast(str, row[12]),
         )
 
-    def _row_to_chunk(self, row: tuple[object, ...]) -> StoredChunk:
+    def _row_to_chunk(
+        self,
+        row: tuple[object, ...],
+        *,
+        score: float = 0.0,
+        score_boost: float = 0.0,
+    ) -> StoredChunk:
         heading_path_raw = cast(str, row[3])
         heading_path = tuple(cast(list[str], json.loads(heading_path_raw)))
         return StoredChunk(
@@ -449,4 +537,6 @@ class SqliteStore:
             document_project=cast("str | None", row[9]),
             summary=cast("str | None", row[10]),
             enrichment=cast("str | None", row[11]),
+            score=score,
+            score_boost=score_boost,
         )

@@ -54,6 +54,8 @@ class StoredChunk:
     document_project: str | None
     summary: str | None = None
     enrichment: str | None = None
+    score: float = 0.0
+    score_boost: float = 0.0
 
 
 type _DocList = list[StoredDocument]
@@ -89,6 +91,7 @@ class Store(Protocol):
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
+        boost: bool = True,
     ) -> _ChunkList: ...
 
     def all_ids(self) -> set[str]: ...
