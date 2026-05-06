@@ -56,6 +56,7 @@ class StoredChunk:
     enrichment: str | None = None
     score: float = 0.0
     score_boost: float = 0.0
+    score_rerank: float | None = None
 
 
 type _DocList = list[StoredDocument]

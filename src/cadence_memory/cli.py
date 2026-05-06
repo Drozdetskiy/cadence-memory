@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import fnmatch
 import json
 import os
@@ -29,6 +30,7 @@ from cadence_memory.config import (
     ProjectConfig,
     effective_enrichment_model,
     effective_expansion_model,
+    effective_rerank_model,
     load_annotations_config,
     load_config,
 )
@@ -61,6 +63,8 @@ from cadence_memory.query.expansion import ClaudeQueryExpander, QueryExpander
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
 from cadence_memory.reindex.engine import reindex as run_reindex
+from cadence_memory.rerank.claude_reranker import ClaudeReranker
+from cadence_memory.rerank.interface import Reranker, RerankItem
 from cadence_memory.store.interface import Mention, Store, StoredChunk
 from cadence_memory.store.sqlite_store import SqliteStore
 from cadence_memory.store_locator import StoreNotFoundError, resolve_store_dir
@@ -286,6 +290,17 @@ def _default_expander_factory(model: str, store: Store) -> QueryExpander:
 _expander_factory: Callable[[str, Store], QueryExpander] = _default_expander_factory
 
 
+def _default_reranker_factory(model: str) -> Reranker:
+    runner = StreamingClaudeRunner(
+        idle_timeout=60.0,
+        output_handler=lambda chunk: typer.echo(chunk, nl=False, err=True),
+    )
+    return ClaudeReranker(runner=runner, model=model)
+
+
+_reranker_factory: Callable[[str], Reranker] = _default_reranker_factory
+
+
 def _resolve_enricher(
     *,
     config: Config,
@@ -473,6 +488,33 @@ def query(
             ),
         ),
     ] = 0,
+    no_rerank: Annotated[
+        bool,
+        typer.Option(
+            "--no-rerank",
+            help="Skip Claude-based rerank of the top-K candidates for this run.",
+        ),
+    ] = False,
+    rerank_model: Annotated[
+        str | None,
+        typer.Option(
+            "--rerank-model",
+            help=(
+                "Override the Claude model used for rerank. "
+                "Falls back to config.query.rerank.model, then config.claude.default_model."
+            ),
+        ),
+    ] = None,
+    rerank_top_k: Annotated[
+        int,
+        typer.Option(
+            "--rerank-top-k",
+            help=(
+                "Maximum number of top candidates to send to the reranker. "
+                "0 (default) uses config.query.rerank.top_k."
+            ),
+        ),
+    ] = 0,
 ) -> None:
     """Full-text search over indexed chunks via SQLite FTS5."""
     if limit < 1:
@@ -480,6 +522,9 @@ def query(
         raise typer.Exit(code=1)
     if variants < 0:
         typer.echo("error: --variants must be >= 0", err=True)
+        raise typer.Exit(code=1)
+    if rerank_top_k < 0:
+        typer.echo("error: --rerank-top-k must be >= 0", err=True)
         raise typer.Exit(code=1)
     _, cfg, _, store = _load_store_context(ctx, Path.cwd())
     try:
@@ -497,12 +542,15 @@ def query(
                 )
         else:
             queries = (text,)
+        rerank_enabled = (not no_rerank) and cfg.query.rerank.enabled
+        effective_top_k = rerank_top_k if rerank_top_k > 0 else cfg.query.rerank.top_k
+        store_limit = max(effective_top_k, limit) if rerank_enabled else limit
         try:
             chunks = store.query(
                 queries,
                 kind=kind,
                 project=project,
-                limit=limit,
+                limit=store_limit,
                 boost=not no_boost,
             )
         except sqlite3.Error as exc:
@@ -511,8 +559,53 @@ def query(
     finally:
         store.close()
 
+    if rerank_enabled and chunks:
+        chunks = _apply_rerank(
+            text,
+            chunks,
+            top_k=effective_top_k,
+            model=rerank_model or effective_rerank_model(cfg),
+            limit=limit,
+        )
+
     fmt = _resolve_format(format)
     typer.echo(format_chunks(chunks, format=fmt))
+
+
+def _apply_rerank(
+    query: str,
+    chunks: list[StoredChunk],
+    *,
+    top_k: int,
+    model: str,
+    limit: int,
+) -> list[StoredChunk]:
+    head = chunks[:top_k]
+    tail = chunks[top_k:]
+    items = [
+        RerankItem(
+            chunk_id=chunk.id,
+            title=chunk.document_title,
+            heading_path=chunk.heading_path,
+            summary=chunk.summary,
+            body_excerpt=chunk.body[:500],
+        )
+        for chunk in head
+    ]
+    reranker = _reranker_factory(model)
+    reranked = reranker.rerank(query, items)
+    score_map = {item.chunk_id: item.score for item in reranked}
+    input_order = {chunk.id: idx for idx, chunk in enumerate(head)}
+    head_sorted = sorted(
+        head,
+        key=lambda chunk: (-score_map.get(chunk.id, 0.0), input_order[chunk.id]),
+    )
+    head_with_scores = [
+        dataclasses.replace(chunk, score_rerank=score_map.get(chunk.id, 0.0))
+        for chunk in head_sorted
+    ]
+    typer.echo(f"reranked top {len(head)} via {model}", err=True)
+    return (head_with_scores + tail)[:limit]
 
 
 @app.command()
