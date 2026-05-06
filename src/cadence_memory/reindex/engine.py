@@ -13,6 +13,7 @@ from typing import Literal
 from cadence_memory.config import AnnotationsConfig, Config, DocumentEntry
 from cadence_memory.documents import annotations as annotations_module
 from cadence_memory.documents import hashes
+from cadence_memory.documents.chunker import chunk_markdown
 from cadence_memory.documents.parser import parse_file
 from cadence_memory.store.interface import Store, StoredDocument
 
@@ -204,8 +205,11 @@ def reindex(
         store_dir=store_dir,
         now=now,
     )
+    chunk_rebuild_ids = set(result.inserted) | set(result.updated_content)
     for doc in planned_upserts:
         store.upsert(doc)
+        if doc.id in chunk_rebuild_ids:
+            store.upsert_chunks(doc.id, chunk_markdown(doc.body))
     for doc_id in result.deleted:
         logger.warning("reindex: deleting orphan document id=%s", doc_id)
         store.delete(doc_id)

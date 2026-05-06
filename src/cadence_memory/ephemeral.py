@@ -12,6 +12,7 @@ from pathlib import Path
 
 from cadence_memory.documents import annotations as annotations_module
 from cadence_memory.documents import hashes
+from cadence_memory.documents.chunker import chunk_markdown
 from cadence_memory.documents.ids import build_ephemeral_id
 from cadence_memory.documents.ids import parse as parse_id
 from cadence_memory.documents.parser import parse_text
@@ -159,6 +160,7 @@ def add(
         indexed_at=now().isoformat(),
     )
     store.upsert(doc)
+    store.upsert_chunks(doc.id, chunk_markdown(doc.body))
     return doc
 
 

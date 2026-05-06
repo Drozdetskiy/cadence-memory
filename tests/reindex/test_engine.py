@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,8 +17,9 @@ from cadence_memory.config import (
     GlobalsConfig,
     ProjectConfig,
 )
+from cadence_memory.documents.chunker import Chunk
 from cadence_memory.reindex.engine import ReindexError, reindex
-from cadence_memory.store.interface import StoredDocument
+from cadence_memory.store.interface import StoredChunk, StoredDocument
 from cadence_memory.store.sqlite_store import SqliteStore
 
 
@@ -78,6 +80,7 @@ class _CountingStore:
         self.inner = inner
         self.upsert_calls: list[StoredDocument] = []
         self.delete_calls: list[str] = []
+        self.upsert_chunks_calls: list[tuple[str, tuple[Chunk, ...]]] = []
 
     def upsert(self, doc: StoredDocument) -> None:
         self.upsert_calls.append(doc)
@@ -99,6 +102,16 @@ class _CountingStore:
     ) -> list[StoredDocument]:
         return self.inner.list(kind=kind, project=project, source_type=source_type)
 
+    def upsert_chunks(self, document_id: str, chunks: Sequence[Chunk]) -> None:
+        self.upsert_chunks_calls.append((document_id, tuple(chunks)))
+        self.inner.upsert_chunks(document_id, chunks)
+
+    def get_chunks(self, document_id: str) -> list[StoredChunk]:
+        return self.inner.get_chunks(document_id)
+
+    def get_chunk(self, chunk_id: str) -> StoredChunk | None:
+        return self.inner.get_chunk(chunk_id)
+
     def query(
         self,
         text: str,
@@ -106,7 +119,7 @@ class _CountingStore:
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
-    ) -> list[StoredDocument]:
+    ) -> list[StoredChunk]:
         return self.inner.query(text, kind=kind, project=project, limit=limit)
 
     def all_ids(self) -> set[str]:
@@ -153,6 +166,12 @@ def test_new_entry_inserted(tmp_path: Path) -> None:
         assert got.kind == "doc"
         assert got.source_type == "project"
         assert got.project == "proj"
+        assert len(store.upsert_chunks_calls) == 1
+        chunked_id, chunks = store.upsert_chunks_calls[0]
+        assert chunked_id == "proj:README.md"
+        assert len(chunks) >= 1
+        stored_chunks = store.get_chunks("proj:README.md")
+        assert len(stored_chunks) == len(chunks)
     finally:
         store.close()
 
@@ -169,6 +188,7 @@ def test_body_change_updates_content(tmp_path: Path) -> None:
 
         reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
         upsert_count_after_first = len(store.upsert_calls)
+        upsert_chunks_count_after_first = len(store.upsert_chunks_calls)
 
         _write(md, "# Title\n\nnew body content\n")
         result = reindex(
@@ -178,14 +198,15 @@ def test_body_change_updates_content(tmp_path: Path) -> None:
         assert result.updated_content == ("proj:README.md",)
         assert result.inserted == ()
         assert len(store.upsert_calls) == upsert_count_after_first + 1
+        assert len(store.upsert_chunks_calls) == upsert_chunks_count_after_first + 1
         got = store.get("proj:README.md")
         assert got is not None
         assert got.body == "# Title\n\nnew body content\n"
 
         hits = store.query("body content")
-        assert any(h.id == "proj:README.md" for h in hits)
+        assert any(h.document_id == "proj:README.md" for h in hits)
         old_hits = store.query("old")
-        assert all(h.id != "proj:README.md" for h in old_hits)
+        assert all(h.document_id != "proj:README.md" for h in old_hits)
     finally:
         store.close()
 
@@ -204,6 +225,7 @@ def test_frontmatter_change_metadata_only(tmp_path: Path) -> None:
         first_doc = store.upsert_calls[-1]
         assert first_doc.body == "# Title\n\nbody\n"
         assert first_doc.kind == "pattern"
+        chunks_after_first = len(store.upsert_chunks_calls)
 
         _write(md, "---\nkind: service\n---\n# Title\n\nbody\n")
         result = reindex(
@@ -215,6 +237,7 @@ def test_frontmatter_change_metadata_only(tmp_path: Path) -> None:
         second_doc = store.upsert_calls[-1]
         assert second_doc.body == first_doc.body
         assert second_doc.kind == "service"
+        assert len(store.upsert_chunks_calls) == chunks_after_first
     finally:
         store.close()
 
@@ -240,6 +263,7 @@ def test_annotations_change_metadata_only(tmp_path: Path) -> None:
         )
 
         reindex(config=cfg, annotations=ann_v1, store=store, store_dir=store_dir, now=_frozen_now)
+        chunks_after_first = len(store.upsert_chunks_calls)
         result = reindex(
             config=cfg, annotations=ann_v2, store=store, store_dir=store_dir, now=_frozen_now
         )
@@ -249,6 +273,7 @@ def test_annotations_change_metadata_only(tmp_path: Path) -> None:
         got = store.get("proj:doc.md")
         assert got is not None
         assert got.tags == ("a", "b")
+        assert len(store.upsert_chunks_calls) == chunks_after_first
     finally:
         store.close()
 
@@ -665,5 +690,56 @@ def test_injected_now_controls_indexed_at(tmp_path: Path) -> None:
         got = store.get("proj:README.md")
         assert got is not None
         assert got.indexed_at == moment.isoformat()
+    finally:
+        store.close()
+
+
+def test_query_returns_chunk_after_reindex(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(
+            project_dir / "guide.md",
+            "# Guide\n\n## Introduction\n\nSome introductory text.\n\n"
+            "## Deployment\n\nThe deployment uses kubernetes manifests.\n",
+        )
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+
+        hits = store.query("kubernetes manifests")
+        assert len(hits) >= 1
+        assert any(h.document_id == "proj:guide.md" for h in hits)
+        deployment_hit = next(h for h in hits if h.document_id == "proj:guide.md")
+        assert "kubernetes" in deployment_hit.body.lower()
+        assert deployment_hit.document_title == "Guide"
+        assert deployment_hit.document_kind == "doc"
+        assert deployment_hit.document_project == "proj"
+    finally:
+        store.close()
+
+
+def test_entry_removed_clears_chunks(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(project_dir / "a.md", "# A\n\ncontent-a\n")
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann_full = AnnotationsConfig(
+            documents=(_entry(id="proj:a.md", project="proj", path="a.md"),)
+        )
+        ann_empty = AnnotationsConfig(documents=())
+
+        reindex(config=cfg, annotations=ann_full, store=store, store_dir=store_dir, now=_frozen_now)
+        assert store.get_chunks("proj:a.md") != []
+
+        result = reindex(
+            config=cfg, annotations=ann_empty, store=store, store_dir=store_dir, now=_frozen_now
+        )
+
+        assert result.deleted == ("proj:a.md",)
+        assert "proj:a.md" in store.delete_calls
+        assert store.get_chunks("proj:a.md") == []
     finally:
         store.close()

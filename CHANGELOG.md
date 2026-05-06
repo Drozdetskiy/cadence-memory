@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0 - 2026-05-06
+
+### Breaking change
+
+- Schema: store теперь индексирует чанки. Существующие store'ы требуют `cadence-memory init` + `reindex`.
+
+### New Features
+
+- Markdown chunker splits each document into chunks at H1/H2 boundaries (code-fence aware), with oversized chunks sub-split by H3 or paragraph blanks; documents without headings produce a single `_preamble` chunk.
+- `cadence-memory query` now returns chunks instead of whole documents — table output gains `kind`, `chunk_id`, `heading` columns; json output exposes `chunk_id`, `document_id`, `kind`, `title`, `project`, `heading_path`, `slug`, `snippet`.
+- `cadence-memory get <doc_id>#<slug>` prints a single chunk's body; `get <doc_id>` still prints the full document body.
+
 ## v0.1.0 - 2026-05-05
 
 First public release. Available via `pip install cadence-memory` and `brew tap Drozdetskiy/cadence && brew install drozdetskiy/cadence/cadence-memory`.

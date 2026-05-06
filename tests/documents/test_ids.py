@@ -95,6 +95,13 @@ def test_rel_path_rejects_colon() -> None:
         build_project_id("p", "docs/has:colon.md")
 
 
+def test_rel_path_rejects_hash() -> None:
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        build_project_id("p", "docs/has#hash.md")
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        build_global_id("docs/has#hash.md")
+
+
 def test_project_name_rejects_empty() -> None:
     with pytest.raises(ValueError, match="must be non-empty"):
         build_project_id("", "README.md")
@@ -115,6 +122,13 @@ def test_project_name_rejects_reserved_eph_prefix() -> None:
         build_project_id("eph", "README.md")
 
 
+def test_project_name_rejects_hash() -> None:
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        build_project_id("bad#name", "README.md")
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        parse("bad#name:README.md")
+
+
 def test_ephemeral_name_rejects_empty() -> None:
     with pytest.raises(ValueError, match="must be non-empty"):
         build_ephemeral_id("")
@@ -133,6 +147,13 @@ def test_ephemeral_name_rejects_slash() -> None:
 def test_ephemeral_name_rejects_backslash() -> None:
     with pytest.raises(ValueError, match="backslash"):
         build_ephemeral_id("..\\evil")
+
+
+def test_ephemeral_name_rejects_hash() -> None:
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        build_ephemeral_id("foo#bar")
+    with pytest.raises(ValueError, match="must not contain '#'"):
+        parse("eph:foo#bar")
 
 
 def test_parse_rejects_double_colon_in_project_id() -> None:

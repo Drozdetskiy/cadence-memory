@@ -258,3 +258,19 @@ def test_slugify_invalid_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="cannot derive slug"):
         ephemeral.add(EphemeralAddOptions(source=src), store=store, store_dir=store_dir)
     store.close()
+
+
+def test_add_makes_ephemeral_searchable(tmp_path: Path) -> None:
+    store_dir, store = _make_store(tmp_path)
+    src = tmp_path / "searchme.md"
+    src.write_text(
+        "# Searchable\n\nbody contains the unique word zephyranthes.\n",
+        encoding="utf-8",
+    )
+
+    ephemeral.add(EphemeralAddOptions(source=src), store=store, store_dir=store_dir)
+
+    hits = store.query("zephyranthes")
+    assert hits
+    assert {c.document_id for c in hits} == {"eph:searchme"}
+    store.close()

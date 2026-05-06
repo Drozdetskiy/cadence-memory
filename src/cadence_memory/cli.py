@@ -47,7 +47,12 @@ from cadence_memory.executor.claude_executor import (
     ClaudeRunner,
     StreamingClaudeRunner,
 )
-from cadence_memory.formatters import Format, format_document, format_documents
+from cadence_memory.formatters import (
+    Format,
+    format_chunks,
+    format_document,
+    format_documents,
+)
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
 from cadence_memory.reindex.engine import reindex as run_reindex
@@ -351,14 +356,14 @@ def query(
         ),
     ] = None,
 ) -> None:
-    """Full-text search over indexed documents via SQLite FTS5."""
+    """Full-text search over indexed chunks via SQLite FTS5."""
     if limit < 1:
         typer.echo("error: --limit must be >= 1", err=True)
         raise typer.Exit(code=1)
     _, _, _, store = _load_store_context(ctx, Path.cwd())
     try:
         try:
-            docs = store.query(text, kind=kind, project=project, limit=limit)
+            chunks = store.query(text, kind=kind, project=project, limit=limit)
         except sqlite3.Error as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -366,7 +371,7 @@ def query(
         store.close()
 
     fmt = _resolve_format(format)
-    typer.echo(format_documents(docs, format=fmt, include_body=False))
+    typer.echo(format_chunks(chunks, format=fmt))
 
 
 @app.command()
@@ -374,11 +379,34 @@ def get(
     ctx: typer.Context,
     id: Annotated[
         str,
-        typer.Argument(help="Document id (e.g. project:path/to/file.md)."),
+        typer.Argument(
+            help=(
+                "Document id (e.g. project:path/to/file.md), "
+                "or chunk id with '#<slug>' to fetch a single chunk body."
+            ),
+        ),
     ],
 ) -> None:
-    """Print the raw markdown body of a document for piping."""
+    """Print the raw markdown body of a document or chunk for piping."""
     _, _, _, store = _load_store_context(ctx, Path.cwd())
+    if "#" in id:
+        try:
+            try:
+                chunk = store.get_chunk(id)
+            except sqlite3.Error as exc:
+                typer.echo(f"error: {exc}", err=True)
+                raise typer.Exit(code=1) from exc
+        finally:
+            store.close()
+
+        if chunk is None:
+            typer.echo(f"error: unknown chunk: {id}", err=True)
+            raise typer.Exit(code=1)
+
+        body = chunk.body if chunk.body.endswith("\n") else chunk.body + "\n"
+        typer.echo(body, nl=False)
+        return
+
     try:
         try:
             doc = store.get(id)

@@ -24,6 +24,8 @@ def _validate_rel_path(rel_path: str) -> None:
         raise ValueError(f"invalid document path {rel_path!r}: must not contain backslash")
     if ":" in rel_path:
         raise ValueError(f"invalid document path {rel_path!r}: must not contain ':'")
+    if "#" in rel_path:
+        raise ValueError(f"invalid document path {rel_path!r}: must not contain '#'")
     for segment in rel_path.split("/"):
         if segment == "..":
             raise ValueError(
@@ -38,6 +40,8 @@ def _validate_project_name(name: str) -> None:
         raise ValueError(f"invalid project name {name!r}: must not contain ':'")
     if "/" in name:
         raise ValueError(f"invalid project name {name!r}: must not contain '/'")
+    if "#" in name:
+        raise ValueError(f"invalid project name {name!r}: must not contain '#'")
     if name == "eph":
         raise ValueError(f"invalid project name {name!r}: reserved (collides with 'eph:' prefix)")
 
@@ -51,6 +55,8 @@ def _validate_ephemeral_name(name: str) -> None:
         raise ValueError(f"invalid ephemeral name {name!r}: must not contain '/'")
     if "\\" in name:
         raise ValueError(f"invalid ephemeral name {name!r}: must not contain backslash")
+    if "#" in name:
+        raise ValueError(f"invalid ephemeral name {name!r}: must not contain '#'")
 
 
 def build_project_id(project: str, rel_path: str) -> str:
