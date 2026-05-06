@@ -514,6 +514,218 @@ def test_upsert_chunks_allows_null_summary(tmp_path: Path) -> None:
         store.close()
 
 
+def test_upsert_chunk_enrichment_round_trips(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        doc = _make_doc(body="english body")
+        store.upsert(doc)
+        store.upsert_chunks(
+            doc.id,
+            [Chunk(slug="_preamble", heading_path=(), body="english body", order=0)],
+        )
+
+        chunk_id = "proj:doc.md#_preamble"
+        store.upsert_chunk_enrichment(chunk_id, "вебхук уведомления notifications")
+
+        got = store.get_chunk(chunk_id)
+        assert got is not None
+        assert got.enrichment == "вебхук уведомления notifications"
+
+        chunks = store.get_chunks(doc.id)
+        assert chunks[0].enrichment == "вебхук уведомления notifications"
+    finally:
+        store.close()
+
+
+def test_fts_query_matches_enrichment_text(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        doc = _make_doc(id="proj:webhook.md", body="english body about events")
+        store.upsert(doc)
+        store.upsert_chunks(
+            doc.id,
+            [Chunk(slug="_preamble", heading_path=(), body="english body about events", order=0)],
+        )
+        store.upsert_chunk_enrichment("proj:webhook.md#_preamble", "вебхук notifications")
+
+        hits = store.query("вебхук")
+        assert {c.id for c in hits} == {"proj:webhook.md#_preamble"}
+        assert hits[0].enrichment == "вебхук notifications"
+
+        # body terms still match
+        body_hits = store.query("events")
+        assert {c.id for c in body_hits} == {"proj:webhook.md#_preamble"}
+    finally:
+        store.close()
+
+
+def test_enrichment_cache_get_put_round_trip(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "test.db")
+    try:
+        assert store.enrichment_cache_get("h1") is None
+
+        store.enrichment_cache_put(
+            content_hash="h1",
+            enrichment_json='{"keywords": ["x"]}',
+            model="claude-haiku-4-5",
+            generated_at="2026-01-02T00:00:00+00:00",
+        )
+
+        got = store.enrichment_cache_get("h1")
+        assert got is not None
+        assert got["enrichment_json"] == '{"keywords": ["x"]}'
+        assert got["model"] == "claude-haiku-4-5"
+        assert got["generated_at"] == "2026-01-02T00:00:00+00:00"
+
+        # replace on duplicate
+        store.enrichment_cache_put(
+            content_hash="h1",
+            enrichment_json='{"keywords": ["y"]}',
+            model="claude-haiku-4-5",
+            generated_at="2026-01-03T00:00:00+00:00",
+        )
+        replaced = store.enrichment_cache_get("h1")
+        assert replaced is not None
+        assert replaced["enrichment_json"] == '{"keywords": ["y"]}'
+    finally:
+        store.close()
+
+
+def test_legacy_store_without_enrichment_column_is_migrated(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(str(db_path))
+    legacy.execute("PRAGMA foreign_keys = ON")
+    legacy.executescript(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            source_type TEXT NOT NULL,
+            project TEXT,
+            abs_path TEXT NOT NULL,
+            rel_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            frontmatter_hash TEXT NOT NULL,
+            annotation_hash TEXT NOT NULL,
+            mtime INTEGER NOT NULL,
+            indexed_at TEXT NOT NULL
+        );
+        CREATE TABLE tags (
+            doc_id TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            PRIMARY KEY (doc_id, tag),
+            FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE TABLE relations (
+            src_id TEXT NOT NULL,
+            dst_id TEXT NOT NULL,
+            PRIMARY KEY (src_id, dst_id),
+            FOREIGN KEY (src_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE TABLE chunks (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            heading_path TEXT NOT NULL,
+            body TEXT NOT NULL,
+            chunk_order INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            summary TEXT,
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE VIRTUAL TABLE documents_fts USING fts5(
+            chunk_id UNINDEXED,
+            document_id UNINDEXED,
+            title,
+            heading_path,
+            body,
+            tags,
+            tokenize='porter unicode61'
+        );
+        """
+    )
+    legacy.execute(
+        "INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "proj:legacy.md",
+            "project",
+            "proj",
+            "/abs/proj/legacy.md",
+            "legacy.md",
+            "pattern",
+            "Legacy Title",
+            "old body legacytoken",
+            "c" * 64,
+            "f" * 64,
+            "a" * 64,
+            1700000000,
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    legacy.execute(
+        "INSERT INTO tags VALUES (?, ?)", ("proj:legacy.md", "legacytag")
+    )
+    legacy.execute(
+        "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "proj:legacy.md#_preamble",
+            "proj:legacy.md",
+            "_preamble",
+            '[]',
+            "old body legacytoken",
+            0,
+            "h" * 64,
+            None,
+        ),
+    )
+    legacy.execute(
+        "INSERT INTO documents_fts VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "proj:legacy.md#_preamble",
+            "proj:legacy.md",
+            "Legacy Title",
+            "",
+            "old body legacytoken",
+            "legacytag",
+        ),
+    )
+    legacy.commit()
+    legacy.close()
+
+    store = SqliteStore(db_path)
+    try:
+        chunk_columns = {
+            row[1] for row in store._conn.execute("PRAGMA table_info(chunks)").fetchall()
+        }
+        assert "enrichment" in chunk_columns
+
+        fts_columns = [
+            row[1] for row in store._conn.execute("PRAGMA table_info(documents_fts)").fetchall()
+        ]
+        assert "enrichment" in fts_columns
+
+        # body and tags still searchable after migration
+        body_hits = store.query("legacytoken")
+        assert {c.id for c in body_hits} == {"proj:legacy.md#_preamble"}
+
+        tag_hits = store.query("legacytag")
+        assert {c.id for c in tag_hits} == {"proj:legacy.md#_preamble"}
+
+        # enrichment_cache table is now present
+        store.enrichment_cache_put(
+            content_hash="abc",
+            enrichment_json="{}",
+            model="m",
+            generated_at="2026-01-01T00:00:00+00:00",
+        )
+        cached = store.enrichment_cache_get("abc")
+        assert cached is not None
+    finally:
+        store.close()
+
+
 def test_ephemeral_document_round_trip(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "test.db")
     try:

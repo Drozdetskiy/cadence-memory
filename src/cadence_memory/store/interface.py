@@ -43,6 +43,7 @@ class StoredChunk:
     document_kind: str
     document_project: str | None
     summary: str | None = None
+    enrichment: str | None = None
 
 
 type _DocList = list[StoredDocument]
@@ -93,5 +94,18 @@ class Store(Protocol):
     ) -> None: ...
 
     def discover_cache_clear(self) -> None: ...
+
+    def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None: ...
+
+    def enrichment_cache_get(self, content_hash: str) -> dict[str, object] | None: ...
+
+    def enrichment_cache_put(
+        self,
+        *,
+        content_hash: str,
+        enrichment_json: str,
+        model: str,
+        generated_at: str,
+    ) -> None: ...
 
     def close(self) -> None: ...

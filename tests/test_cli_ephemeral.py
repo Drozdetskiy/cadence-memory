@@ -44,7 +44,11 @@ def _make_seeded_store(tmp_path: Path) -> tuple[Path, Path]:
 
     _write(project_dir / "alpha.md", "# Alpha\n\nuniqalpha body\n")
 
-    config_yaml = f"projects:\n  - name: proj\n    path: {project_dir}\ndefaults:\n  kind: doc\n"
+    config_yaml = (
+        f"projects:\n  - name: proj\n    path: {project_dir}\n"
+        "defaults:\n  kind: doc\n"
+        "enrichment:\n  enabled: false\n"
+    )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
     annotations_yaml = (

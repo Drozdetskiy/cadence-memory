@@ -10,14 +10,17 @@ import pytest
 
 from cadence_memory.config import (
     AnnotationsConfig,
+    ClaudeConfig,
     Config,
     ConfigError,
     Defaults,
     DiscoverConfig,
     DocumentEntry,
+    EnrichmentConfig,
     GlobalsConfig,
     KindRule,
     ProjectConfig,
+    effective_enrichment_model,
     load_annotations_config,
     load_config,
 )
@@ -83,6 +86,8 @@ def test_load_config_minimal_applies_defaults() -> None:
     assert cfg.globals.exclude == ("ephemeral/**", "annotations-config.yaml*")
     assert cfg.defaults.kind == "doc"
     assert cfg.commit_index is False
+    assert cfg.claude == ClaudeConfig(default_model="claude-haiku-4-5")
+    assert cfg.enrichment == EnrichmentConfig(enabled=True, model=None)
 
 
 def test_load_config_unknown_top_key() -> None:
@@ -724,6 +729,114 @@ def test_load_config_globals_partial_overrides_keep_other_default(tmp_path: Path
 
 
 # --------------------------------------------------------------------------- #
+# claude / enrichment sections                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_load_config_claude_and_enrichment_defaults_when_absent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: []\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.claude == ClaudeConfig(default_model="claude-haiku-4-5")
+    assert cfg.enrichment == EnrichmentConfig(enabled=True, model=None)
+    assert effective_enrichment_model(cfg) == "claude-haiku-4-5"
+
+
+def test_load_config_claude_default_model_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "claude:\n  default_model: claude-sonnet-4-6\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.claude.default_model == "claude-sonnet-4-6"
+    assert effective_enrichment_model(cfg) == "claude-sonnet-4-6"
+
+
+def test_load_config_enrichment_explicit_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "enrichment:\n  enabled: false\n  model: claude-opus-4-7\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.enrichment == EnrichmentConfig(enabled=False, model="claude-opus-4-7")
+    assert effective_enrichment_model(cfg) == "claude-opus-4-7"
+
+
+def test_load_config_enrichment_null_model_falls_back_to_claude(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "claude:\n"
+            "  default_model: claude-haiku-foo\n"
+            "enrichment:\n"
+            "  enabled: true\n"
+            "  model: null\n"
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.enrichment.model is None
+    assert effective_enrichment_model(cfg) == "claude-haiku-foo"
+
+
+def test_load_config_claude_unknown_key_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("claude:\n  bogus: value\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "claude.bogus" in msg
+    assert "not a known key" in msg
+
+
+def test_load_config_enrichment_unknown_key_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("enrichment:\n  bogus: 1\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "enrichment.bogus" in msg
+    assert "not a known key" in msg
+
+
+def test_load_config_claude_must_be_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("claude: not-a-mapping\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"claude must be a mapping"):
+        load_config(config_path)
+
+
+def test_load_config_enrichment_must_be_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("enrichment: not-a-mapping\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"enrichment must be a mapping"):
+        load_config(config_path)
+
+
+def test_load_config_enrichment_enabled_must_be_bool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("enrichment:\n  enabled: maybe\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"enrichment\.enabled"):
+        load_config(config_path)
+
+
+def test_load_config_enrichment_model_must_be_string(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("enrichment:\n  model: 42\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"enrichment\.model"):
+        load_config(config_path)
+
+
+def test_load_config_claude_default_model_must_be_string(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("claude:\n  default_model: 42\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"claude\.default_model"):
+        load_config(config_path)
+
+
+# --------------------------------------------------------------------------- #
 # Embedded default templates copied by `cadence-memory init`                  #
 # --------------------------------------------------------------------------- #
 
@@ -745,6 +858,9 @@ def test_default_config_template_loads(tmp_path: Path) -> None:
     )
     assert cfg.defaults == Defaults(kind="doc")
     assert cfg.commit_index is False
+    assert cfg.claude == ClaudeConfig(default_model="claude-haiku-4-5")
+    assert cfg.enrichment == EnrichmentConfig(enabled=True, model=None)
+    assert effective_enrichment_model(cfg) == "claude-haiku-4-5"
 
 
 def test_default_annotations_template_loads(tmp_path: Path) -> None:

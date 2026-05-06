@@ -7,6 +7,7 @@ import hashlib
 
 from cadence_memory.documents.hashes import (
     annotation_hash,
+    chunk_content_hash,
     content_hash,
     frontmatter_hash,
 )
@@ -122,6 +123,25 @@ def test_annotation_hash_empty_mapping() -> None:
 
 def test_annotation_hash_returns_lowercase_64_char_hex() -> None:
     digest = annotation_hash({"k": "v"})
+    assert len(digest) == 64
+    assert digest == digest.lower()
+    int(digest, 16)
+
+
+def test_chunk_content_hash_matches_sha256_of_slug_newline_body() -> None:
+    digest = chunk_content_hash("overview", "the body")
+    expected = hashlib.sha256(b"overview\nthe body").hexdigest()
+    assert digest == expected
+
+
+def test_chunk_content_hash_changes_when_slug_or_body_changes() -> None:
+    base = chunk_content_hash("a", "body")
+    assert chunk_content_hash("b", "body") != base
+    assert chunk_content_hash("a", "BODY") != base
+
+
+def test_chunk_content_hash_returns_lowercase_64_char_hex() -> None:
+    digest = chunk_content_hash("slug", "body")
     assert len(digest) == 64
     assert digest == digest.lower()
     int(digest, 16)

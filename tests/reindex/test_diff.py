@@ -121,6 +121,27 @@ class _CountingStore:
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()
 
+    def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
+        self.inner.upsert_chunk_enrichment(chunk_id, enrichment_text)
+
+    def enrichment_cache_get(self, content_hash: str) -> dict[str, object] | None:
+        return self.inner.enrichment_cache_get(content_hash)
+
+    def enrichment_cache_put(
+        self,
+        *,
+        content_hash: str,
+        enrichment_json: str,
+        model: str,
+        generated_at: str,
+    ) -> None:
+        self.inner.enrichment_cache_put(
+            content_hash=content_hash,
+            enrichment_json=enrichment_json,
+            model=model,
+            generated_at=generated_at,
+        )
+
     def close(self) -> None:
         self.inner.close()
 

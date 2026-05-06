@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,8 +14,9 @@ from typing import Literal
 from cadence_memory.config import AnnotationsConfig, Config, DocumentEntry
 from cadence_memory.documents import annotations as annotations_module
 from cadence_memory.documents import hashes
-from cadence_memory.documents.chunker import chunk_markdown
+from cadence_memory.documents.chunker import Chunk, chunk_markdown
 from cadence_memory.documents.parser import parse_file
+from cadence_memory.enrichment.interface import Enricher, EnrichmentResult
 from cadence_memory.store.interface import Store, StoredDocument
 
 __all__ = ["ReindexError", "ReindexResult", "reindex"]
@@ -33,6 +35,8 @@ class ReindexResult:
     updated_metadata_only: tuple[str, ...]
     deleted: tuple[str, ...]
     skipped_optional_missing: tuple[str, ...]
+    enriched_chunks: int = 0
+    enrichment_cache_hits: int = 0
 
 
 def _utc_now() -> datetime:
@@ -197,20 +201,116 @@ def reindex(
     store: Store,
     store_dir: Path,
     now: Callable[[], datetime] = _utc_now,
+    enricher: Enricher | None = None,
 ) -> ReindexResult:
-    planned_upserts, result = _classify_entries(
+    planned_upserts, classified = _classify_entries(
         config=config,
         annotations=annotations,
         store=store,
         store_dir=store_dir,
         now=now,
     )
-    chunk_rebuild_ids = set(result.inserted) | set(result.updated_content)
+    chunk_rebuild_ids = set(classified.inserted) | set(classified.updated_content)
+    enriched_total = 0
+    cache_hits_total = 0
     for doc in planned_upserts:
         store.upsert(doc)
         if doc.id in chunk_rebuild_ids:
-            store.upsert_chunks(doc.id, chunk_markdown(doc.body, kind=doc.kind, doc_id=doc.id))
-    for doc_id in result.deleted:
+            chunks = chunk_markdown(doc.body, kind=doc.kind, doc_id=doc.id)
+            store.upsert_chunks(doc.id, chunks)
+            enriched, cache_hits = _enrich_document_chunks(
+                doc_id=doc.id,
+                doc_title=doc.title,
+                chunks=chunks,
+                store=store,
+                enricher=enricher,
+            )
+            enriched_total += enriched
+            cache_hits_total += cache_hits
+            if enricher is not None or cache_hits:
+                print(
+                    f"enrichment: doc={doc.id} chunks={len(chunks)} "
+                    f"new={enriched} cache_hits={cache_hits}",
+                    file=sys.stderr,
+                )
+    for doc_id in classified.deleted:
         logger.warning("reindex: deleting orphan document id=%s", doc_id)
         store.delete(doc_id)
-    return result
+    return ReindexResult(
+        inserted=classified.inserted,
+        updated_content=classified.updated_content,
+        updated_metadata_only=classified.updated_metadata_only,
+        deleted=classified.deleted,
+        skipped_optional_missing=classified.skipped_optional_missing,
+        enriched_chunks=enriched_total,
+        enrichment_cache_hits=cache_hits_total,
+    )
+
+
+def _enrich_document_chunks(
+    *,
+    doc_id: str,
+    doc_title: str,
+    chunks: Sequence[Chunk],
+    store: Store,
+    enricher: Enricher | None,
+) -> tuple[int, int]:
+    # When `enricher` is None we still consult the cache so chunks whose
+    # content_hash matches a prior cached entry retain their enrichment after
+    # an unrelated body edit triggers a chunk rebuild. expected_model=None
+    # accepts whatever model produced the cached entry.
+    expected_model = enricher.model if enricher is not None else None
+    enriched = 0
+    cache_hits = 0
+    for chunk in chunks:
+        chunk_id = f"{doc_id}#{chunk.slug}"
+        c_hash = hashes.chunk_content_hash(chunk.slug, chunk.body)
+        cached_result = _load_cached_enrichment(
+            store, c_hash, expected_model=expected_model
+        )
+        if cached_result is not None:
+            store.upsert_chunk_enrichment(chunk_id, cached_result.to_index_text())
+            cache_hits += 1
+            continue
+        if enricher is None:
+            continue
+        result = enricher.enrich_chunk(
+            title=doc_title,
+            heading_path=chunk.heading_path,
+            body=chunk.body,
+            summary=chunk.summary,
+        )
+        if not (result.keywords or result.questions or result.alt_phrasings):
+            # Failed/empty enrichment: do not cache so the next reindex retries.
+            continue
+        store.enrichment_cache_put(
+            content_hash=c_hash,
+            enrichment_json=result.to_json(),
+            model=result.model,
+            generated_at=result.generated_at,
+        )
+        store.upsert_chunk_enrichment(chunk_id, result.to_index_text())
+        enriched += 1
+    return enriched, cache_hits
+
+
+def _load_cached_enrichment(
+    store: Store,
+    content_hash: str,
+    *,
+    expected_model: str | None = None,
+) -> EnrichmentResult | None:
+    cached = store.enrichment_cache_get(content_hash)
+    if cached is None:
+        return None
+    cached_model = str(cached["model"])
+    if expected_model is not None and cached_model != expected_model:
+        return None
+    try:
+        return EnrichmentResult.from_json(
+            str(cached["enrichment_json"]),
+            model=cached_model,
+            generated_at=str(cached["generated_at"]),
+        )
+    except (ValueError, KeyError):
+        return None

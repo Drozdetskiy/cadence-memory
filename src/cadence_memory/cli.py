@@ -27,6 +27,7 @@ from cadence_memory.config import (
     Config,
     ConfigError,
     ProjectConfig,
+    effective_enrichment_model,
     load_annotations_config,
     load_config,
 )
@@ -41,6 +42,8 @@ from cadence_memory.discover.runner import (
     run_discover,
 )
 from cadence_memory.discover.scanner import scan_project
+from cadence_memory.enrichment.claude_enricher import ClaudeEnricher
+from cadence_memory.enrichment.interface import Enricher
 from cadence_memory.ephemeral import EphemeralAddOptions, EphemeralExists
 from cadence_memory.executor.claude_executor import (
     ClaudeNotFound,
@@ -218,7 +221,12 @@ def _load_store_context(
     return store_dir, cfg, annotations, store
 
 
-def _format_summary(result: ReindexResult, *, dry_run: bool) -> str:
+def _format_summary(
+    result: ReindexResult,
+    *,
+    dry_run: bool,
+    enrichment_used: bool = False,
+) -> str:
     line = (
         f"inserted: {len(result.inserted)}, "
         f"content-updated: {len(result.updated_content)}, "
@@ -226,6 +234,11 @@ def _format_summary(result: ReindexResult, *, dry_run: bool) -> str:
         f"deleted: {len(result.deleted)}, "
         f"skipped: {len(result.skipped_optional_missing)}"
     )
+    if enrichment_used:
+        line += (
+            f", enriched: {result.enriched_chunks}, "
+            f"enrichment-cache-hits: {result.enrichment_cache_hits}"
+        )
     if dry_run:
         line += " (dry-run)"
     return line
@@ -247,6 +260,31 @@ def _print_verbose(result: ReindexResult) -> None:
             typer.echo(f"  {doc_id}")
 
 
+def _default_enricher_factory(model: str, idle_timeout: float) -> Enricher:
+    runner = StreamingClaudeRunner(
+        idle_timeout=idle_timeout,
+        output_handler=lambda chunk: typer.echo(chunk, nl=False, err=True),
+        activity_handler=lambda tool: typer.echo(f"  -> {tool}", err=True),
+    )
+    return ClaudeEnricher(runner=runner, model=model)
+
+
+_enricher_factory: Callable[[str, float], Enricher] = _default_enricher_factory
+
+
+def _resolve_enricher(
+    *,
+    config: Config,
+    no_enrichment: bool,
+    enrichment_model: str | None,
+    idle_timeout: float,
+) -> Enricher | None:
+    if no_enrichment or not config.enrichment.enabled:
+        return None
+    model = enrichment_model or effective_enrichment_model(config)
+    return _enricher_factory(model, idle_timeout)
+
+
 @app.command()
 def reindex(
     ctx: typer.Context,
@@ -254,9 +292,42 @@ def reindex(
         bool,
         typer.Option("--verbose", "-v", help="List affected document ids per bucket."),
     ] = False,
+    no_enrichment: Annotated[
+        bool,
+        typer.Option(
+            "--no-enrichment",
+            help="Skip Claude-based chunk enrichment for this run.",
+        ),
+    ] = False,
+    enrichment_model: Annotated[
+        str | None,
+        typer.Option(
+            "--enrichment-model",
+            help=(
+                "Override the Claude model used for enrichment. "
+                "Falls back to config.enrichment.model, then config.claude.default_model."
+            ),
+        ),
+    ] = None,
+    enrichment_idle_timeout: Annotated[
+        float,
+        typer.Option(
+            "--enrichment-idle-timeout",
+            help=(
+                "Seconds without Claude output before aborting an enrichment call; "
+                "0 disables the watchdog."
+            ),
+        ),
+    ] = 300.0,
 ) -> None:
     """Rebuild the SQLite index from config.yaml and annotations-config.yaml."""
     store_dir, cfg, annotations, store = _load_store_context(ctx, Path.cwd())
+    enricher = _resolve_enricher(
+        config=cfg,
+        no_enrichment=no_enrichment,
+        enrichment_model=enrichment_model,
+        idle_timeout=enrichment_idle_timeout,
+    )
     try:
         try:
             result = run_reindex(
@@ -264,6 +335,7 @@ def reindex(
                 annotations=annotations,
                 store=store,
                 store_dir=store_dir,
+                enricher=enricher,
             )
         except (ReindexError, sqlite3.Error) as exc:
             typer.echo(f"error: {exc}", err=True)
@@ -273,7 +345,8 @@ def reindex(
 
     if verbose:
         _print_verbose(result)
-    typer.echo(_format_summary(result, dry_run=False))
+    enrichment_used = enricher is not None or result.enrichment_cache_hits > 0
+    typer.echo(_format_summary(result, dry_run=False, enrichment_used=enrichment_used))
 
 
 def _resolve_format(flag: Format | None) -> Format:

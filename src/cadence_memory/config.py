@@ -48,11 +48,29 @@ class Defaults:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaudeConfig:
+    default_model: str = "claude-haiku-4-5"
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichmentConfig:
+    enabled: bool = True
+    model: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     projects: tuple[ProjectConfig, ...]
     globals: GlobalsConfig
     defaults: Defaults
     commit_index: bool
+    claude: ClaudeConfig = ClaudeConfig()
+    enrichment: EnrichmentConfig = EnrichmentConfig()
+
+
+def effective_enrichment_model(config: Config) -> str:
+    """Return enrichment model: explicit override or claude.default_model fallback."""
+    return config.enrichment.model or config.claude.default_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,13 +95,15 @@ _VALID_KINDS: Final[frozenset[str]] = frozenset(
     {"service", "pattern", "adr", "glossary", "task", "doc", "api-spec"}
 )
 _TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset(
-    {"projects", "globals", "defaults", "commit_index"}
+    {"projects", "globals", "defaults", "commit_index", "claude", "enrichment"}
 )
 _PROJECT_KEYS: Final[frozenset[str]] = frozenset({"name", "path", "exclude", "discover"})
 _DISCOVER_KEYS: Final[frozenset[str]] = frozenset({"kind_rules"})
 _KIND_RULE_KEYS: Final[frozenset[str]] = frozenset({"pattern", "kind"})
 _GLOBALS_KEYS: Final[frozenset[str]] = frozenset({"include", "exclude"})
 _DEFAULTS_KEYS: Final[frozenset[str]] = frozenset({"kind"})
+_CLAUDE_KEYS: Final[frozenset[str]] = frozenset({"default_model"})
+_ENRICHMENT_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model"})
 _ANNOTATIONS_TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset({"documents"})
 _DOCUMENT_KEYS: Final[frozenset[str]] = frozenset(
     {"id", "project", "path", "kind", "title", "tags", "related", "optional"}
@@ -259,6 +279,46 @@ def _parse_globals(prefix: str, data: object) -> GlobalsConfig:
     return GlobalsConfig(include=include, exclude=exclude)
 
 
+def _parse_claude(prefix: str, data: object) -> ClaudeConfig:
+    if data is None:
+        return ClaudeConfig()
+    if not isinstance(data, dict):
+        raise _err(prefix, "claude", f"must be a mapping, got {type(data).__name__}")
+    typed = _as_str_keyed_dict(prefix, "claude", data)
+    _check_unknown_keys(prefix, "claude", typed, _CLAUDE_KEYS)
+    raw = typed.get("default_model")
+    if raw is None:
+        return ClaudeConfig()
+    default_model = _require_str(prefix, "claude.default_model", raw)
+    return ClaudeConfig(default_model=default_model)
+
+
+def _parse_enrichment(prefix: str, data: object) -> EnrichmentConfig:
+    if data is None:
+        return EnrichmentConfig()
+    if not isinstance(data, dict):
+        raise _err(prefix, "enrichment", f"must be a mapping, got {type(data).__name__}")
+    typed = _as_str_keyed_dict(prefix, "enrichment", data)
+    _check_unknown_keys(prefix, "enrichment", typed, _ENRICHMENT_KEYS)
+
+    enabled_raw = typed.get("enabled")
+    if enabled_raw is None:
+        enabled = True
+    elif isinstance(enabled_raw, bool):
+        enabled = enabled_raw
+    else:
+        raise _err(
+            prefix,
+            "enrichment.enabled",
+            f"must be a boolean, got {type(enabled_raw).__name__}",
+        )
+
+    model_raw = typed.get("model")
+    model = None if model_raw is None else _require_str(prefix, "enrichment.model", model_raw)
+
+    return EnrichmentConfig(enabled=enabled, model=model)
+
+
 def _parse_defaults(prefix: str, data: object) -> Defaults:
     if data is None:
         return Defaults(kind=_DEFAULT_KIND)
@@ -332,11 +392,16 @@ def load_config(path: Path) -> Config:
             f"must be a boolean, got {type(commit_index_raw).__name__}",
         )
 
+    claude_cfg = _parse_claude(prefix, typed.get("claude"))
+    enrichment_cfg = _parse_enrichment(prefix, typed.get("enrichment"))
+
     return Config(
         projects=projects,
         globals=globals_cfg,
         defaults=defaults_cfg,
         commit_index=commit_index,
+        claude=claude_cfg,
+        enrichment=enrichment_cfg,
     )
 
 

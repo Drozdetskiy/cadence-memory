@@ -84,6 +84,8 @@ def test_default_yaml_templates_parse() -> None:
     assert yaml.safe_load(config_text) == {
         "projects": [],
         "defaults": {"kind": "doc"},
+        "claude": {"default_model": "claude-haiku-4-5"},
+        "enrichment": {"enabled": True, "model": None},
     }
     assert yaml.safe_load(annotations_text) == {"documents": []}
 

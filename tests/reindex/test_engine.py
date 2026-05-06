@@ -18,6 +18,7 @@ from cadence_memory.config import (
     ProjectConfig,
 )
 from cadence_memory.documents.chunker import Chunk
+from cadence_memory.enrichment.interface import EnrichmentResult
 from cadence_memory.reindex.engine import ReindexError, reindex
 from cadence_memory.store.interface import StoredChunk, StoredDocument
 from cadence_memory.store.sqlite_store import SqliteStore
@@ -81,6 +82,9 @@ class _CountingStore:
         self.upsert_calls: list[StoredDocument] = []
         self.delete_calls: list[str] = []
         self.upsert_chunks_calls: list[tuple[str, tuple[Chunk, ...]]] = []
+        self.upsert_chunk_enrichment_calls: list[tuple[str, str]] = []
+        self.enrichment_cache_get_calls: list[str] = []
+        self.enrichment_cache_put_calls: list[dict[str, str]] = []
 
     def upsert(self, doc: StoredDocument) -> None:
         self.upsert_calls.append(doc)
@@ -125,8 +129,81 @@ class _CountingStore:
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()
 
+    def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
+        self.upsert_chunk_enrichment_calls.append((chunk_id, enrichment_text))
+        self.inner.upsert_chunk_enrichment(chunk_id, enrichment_text)
+
+    def enrichment_cache_get(self, content_hash: str) -> dict[str, object] | None:
+        self.enrichment_cache_get_calls.append(content_hash)
+        return self.inner.enrichment_cache_get(content_hash)
+
+    def enrichment_cache_put(
+        self,
+        *,
+        content_hash: str,
+        enrichment_json: str,
+        model: str,
+        generated_at: str,
+    ) -> None:
+        self.enrichment_cache_put_calls.append(
+            {
+                "content_hash": content_hash,
+                "enrichment_json": enrichment_json,
+                "model": model,
+                "generated_at": generated_at,
+            }
+        )
+        self.inner.enrichment_cache_put(
+            content_hash=content_hash,
+            enrichment_json=enrichment_json,
+            model=model,
+            generated_at=generated_at,
+        )
+
     def close(self) -> None:
         self.inner.close()
+
+
+class _StubEnricher:
+    """Deterministic enricher that records every call."""
+
+    def __init__(
+        self,
+        *,
+        keywords: tuple[str, ...] = ("вебхук", "webhook", "сигнал"),
+        questions: tuple[str, ...] = ("How are webhooks processed?",),
+        alt_phrasings: tuple[str, ...] = ("event delivery",),
+        model: str = "claude-haiku-4-5",
+    ) -> None:
+        self._keywords = keywords
+        self._questions = questions
+        self._alt_phrasings = alt_phrasings
+        self.model = model
+        self.calls: list[dict[str, object]] = []
+
+    def enrich_chunk(
+        self,
+        *,
+        title: str,
+        heading_path: tuple[str, ...],
+        body: str,
+        summary: str | None,
+    ) -> EnrichmentResult:
+        self.calls.append(
+            {
+                "title": title,
+                "heading_path": heading_path,
+                "body": body,
+                "summary": summary,
+            }
+        )
+        return EnrichmentResult(
+            keywords=self._keywords,
+            questions=self._questions,
+            alt_phrasings=self._alt_phrasings,
+            model=self.model,
+            generated_at="2026-05-05T12:30:00+00:00",
+        )
 
 
 def _setup(
@@ -803,5 +880,379 @@ def test_entry_removed_clears_chunks(tmp_path: Path) -> None:
         assert result.deleted == ("proj:a.md",)
         assert "proj:a.md" in store.delete_calls
         assert store.get_chunks("proj:a.md") == []
+    finally:
+        store.close()
+
+
+def test_reindex_without_enricher_does_not_enrich(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(project_dir / "guide.md", "# Guide\n\nDeployment uses kubernetes.\n")
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+
+        result = reindex(
+            config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now
+        )
+
+        # No enricher and an empty cache: no Claude calls, nothing written.
+        assert result.enriched_chunks == 0
+        assert result.enrichment_cache_hits == 0
+        assert store.upsert_chunk_enrichment_calls == []
+        assert store.enrichment_cache_put_calls == []
+    finally:
+        store.close()
+
+
+def test_reindex_with_enricher_populates_chunks_and_fts(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(project_dir / "guide.md", "# Guide\n\nDeployment uses kubernetes manifests.\n")
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+        enricher = _StubEnricher(
+            keywords=("вебхук", "webhook"),
+            questions=("Как устроен вебхук?",),
+            alt_phrasings=("event delivery",),
+        )
+
+        result = reindex(
+            config=cfg,
+            annotations=ann,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=enricher,
+        )
+
+        assert result.enriched_chunks == len(enricher.calls)
+        assert result.enriched_chunks >= 1
+        assert result.enrichment_cache_hits == 0
+        assert len(store.upsert_chunk_enrichment_calls) == result.enriched_chunks
+        assert len(store.enrichment_cache_put_calls) == result.enriched_chunks
+
+        stored_chunks = store.get_chunks("proj:guide.md")
+        assert stored_chunks
+        assert all(
+            chunk.enrichment is not None and "вебхук" in chunk.enrichment
+            for chunk in stored_chunks
+        )
+
+        hits = store.query("вебхук")
+        assert any(h.document_id == "proj:guide.md" for h in hits)
+    finally:
+        store.close()
+
+
+def test_reindex_with_enricher_hits_cache_for_identical_chunk_in_new_doc(
+    tmp_path: Path,
+) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        body = "# Shared\n\nDeployment uses kubernetes manifests.\n"
+        _write(project_dir / "a.md", body)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann_first = AnnotationsConfig(
+            documents=(_entry(id="proj:a.md", project="proj", path="a.md"),)
+        )
+        enricher = _StubEnricher()
+
+        first = reindex(
+            config=cfg,
+            annotations=ann_first,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=enricher,
+        )
+        first_call_count = len(enricher.calls)
+        assert first.enriched_chunks == first_call_count
+        assert first.enrichment_cache_hits == 0
+
+        _write(project_dir / "b.md", body)
+        ann_second = AnnotationsConfig(
+            documents=(
+                _entry(id="proj:a.md", project="proj", path="a.md"),
+                _entry(id="proj:b.md", project="proj", path="b.md"),
+            )
+        )
+
+        second = reindex(
+            config=cfg,
+            annotations=ann_second,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=enricher,
+        )
+
+        assert len(enricher.calls) == first_call_count
+        assert second.enriched_chunks == 0
+        assert second.enrichment_cache_hits == first_call_count
+    finally:
+        store.close()
+
+
+def test_reindex_with_enricher_enriches_only_changed_chunk(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        md = project_dir / "guide.md"
+        # Long preamble (>500 bytes) so the chunker doesn't auto-extend the
+        # preamble into the section bodies; this keeps each section's chunk
+        # content_hash independent of changes in other sections.
+        preamble = (
+            "This guide explains the team's deployment process and recovery "
+            "procedures across staging and production environments in great "
+            "detail. It is intended for engineers performing release work and "
+            "oncall shifts and assumes familiarity with the existing pipeline. "
+            "Sections below cover Section A (build) and Section B (deploy) in "
+            "turn, with concrete examples and runbook references that the "
+            "reader can follow step by step during an incident or release. "
+            "Refer to the team's onboarding guide for context on terminology "
+            "and the change-management workflow used by reviewers.\n\n"
+            "Section index follows below.\n\n"
+        )
+        assert len(preamble.encode("utf-8")) >= 500
+        body_v1 = (
+            preamble
+            + "## Section A\n\nAlpha section text body alpha.\n\n"
+            + "## Section B\n\nBeta section text body beta.\n"
+        )
+        _write(md, body_v1)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+        enricher = _StubEnricher()
+
+        first = reindex(
+            config=cfg,
+            annotations=ann,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=enricher,
+        )
+        first_calls = len(enricher.calls)
+        assert first.enriched_chunks == first_calls
+        assert first_calls >= 2
+
+        body_v2 = (
+            preamble
+            + "## Section A\n\nAlpha section text body alpha.\n\n"
+            + "## Section B\n\nBeta section text body beta WAS CHANGED.\n"
+        )
+        _write(md, body_v2)
+        second = reindex(
+            config=cfg,
+            annotations=ann,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=enricher,
+        )
+
+        new_calls = len(enricher.calls) - first_calls
+        assert new_calls == 1
+        assert second.enriched_chunks == 1
+        assert second.enrichment_cache_hits == first_calls - 1
+    finally:
+        store.close()
+
+
+class _FailingEnricher:
+    """Mimics ClaudeEnricher's failure mode: empty EnrichmentResult on every call."""
+
+    def __init__(self, model: str = "claude-haiku-4-5") -> None:
+        self.model = model
+        self.calls: list[dict[str, object]] = []
+
+    def enrich_chunk(
+        self,
+        *,
+        title: str,
+        heading_path: tuple[str, ...],
+        body: str,
+        summary: str | None,
+    ) -> EnrichmentResult:
+        self.calls.append(
+            {
+                "title": title,
+                "heading_path": heading_path,
+                "body": body,
+                "summary": summary,
+            }
+        )
+        return EnrichmentResult(
+            keywords=(),
+            questions=(),
+            alt_phrasings=(),
+            model=self.model,
+            generated_at="2026-05-05T12:30:00+00:00",
+        )
+
+
+def test_reindex_does_not_cache_failed_enrichment(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        body = "# Guide\n\nDeployment uses kubernetes manifests.\n"
+        _write(project_dir / "a.md", body)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann_first = AnnotationsConfig(
+            documents=(_entry(id="proj:a.md", project="proj", path="a.md"),)
+        )
+        failing = _FailingEnricher()
+
+        first = reindex(
+            config=cfg,
+            annotations=ann_first,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=failing,
+        )
+
+        assert first.enriched_chunks == 0
+        assert first.enrichment_cache_hits == 0
+        assert len(failing.calls) >= 1
+        # Failed enrichment must not be cached or written to chunks/FTS;
+        # otherwise a transient Claude error permanently disables enrichment
+        # for every chunk with the same content_hash.
+        assert store.enrichment_cache_put_calls == []
+        assert store.upsert_chunk_enrichment_calls == []
+
+        # When a different document with identical chunk content is added,
+        # enrichment is retried (the failed result was not cached against
+        # that content_hash).
+        _write(project_dir / "b.md", body)
+        ann_second = AnnotationsConfig(
+            documents=(
+                _entry(id="proj:a.md", project="proj", path="a.md"),
+                _entry(id="proj:b.md", project="proj", path="b.md"),
+            )
+        )
+        good = _StubEnricher(keywords=("вебхук",))
+
+        second = reindex(
+            config=cfg,
+            annotations=ann_second,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=good,
+        )
+
+        assert second.enriched_chunks >= 1
+        assert second.enrichment_cache_hits == 0
+        assert len(good.calls) >= 1
+        hits = store.query("вебхук")
+        assert any(h.document_id == "proj:b.md" for h in hits)
+    finally:
+        store.close()
+
+
+def test_reindex_skips_cache_when_model_differs(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        body = "# Guide\n\nDeployment uses kubernetes manifests.\n"
+        _write(project_dir / "a.md", body)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann_first = AnnotationsConfig(
+            documents=(_entry(id="proj:a.md", project="proj", path="a.md"),)
+        )
+        haiku = _StubEnricher(model="claude-haiku-4-5", keywords=("вебхукхаики",))
+
+        first = reindex(
+            config=cfg,
+            annotations=ann_first,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=haiku,
+        )
+        assert first.enriched_chunks >= 1
+
+        # Add a second doc with identical chunk content, but enrich with a
+        # different model: cache hits would silently return the haiku output,
+        # so the engine must treat the model mismatch as a miss and call
+        # the new enricher.
+        _write(project_dir / "b.md", body)
+        ann_second = AnnotationsConfig(
+            documents=(
+                _entry(id="proj:a.md", project="proj", path="a.md"),
+                _entry(id="proj:b.md", project="proj", path="b.md"),
+            )
+        )
+        sonnet = _StubEnricher(model="claude-sonnet-4-6", keywords=("вебхуксоннет",))
+
+        second = reindex(
+            config=cfg,
+            annotations=ann_second,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=sonnet,
+        )
+
+        assert len(sonnet.calls) >= 1
+        assert second.enriched_chunks >= 1
+        assert second.enrichment_cache_hits == 0
+        # The new model's keyword should be searchable on the new doc.
+        sonnet_hits = store.query("вебхуксоннет")
+        assert any(h.document_id == "proj:b.md" for h in sonnet_hits)
+    finally:
+        store.close()
+
+
+def test_no_enrichment_repopulates_chunks_from_cache(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        chunk_body = "## Webhooks\n\nDeployment uses kubernetes manifests.\n"
+        original = "# Guide\n\nintro paragraph.\n\n" + chunk_body
+        _write(project_dir / "guide.md", original)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+        good = _StubEnricher(keywords=("вебхуккеш",))
+
+        reindex(
+            config=cfg,
+            annotations=ann,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=good,
+        )
+        baseline_calls = len(good.calls)
+        assert baseline_calls >= 2  # intro chunk + webhooks chunk
+
+        # Edit only the intro paragraph — the "Webhooks" chunk's content_hash
+        # is unchanged but the doc body changed, so chunks are rebuilt and
+        # `upsert_chunks` clears all enrichment columns to NULL. With
+        # --no-enrichment we cannot call Claude, but the engine should still
+        # consult the cache and restore the unchanged chunk's enrichment.
+        edited = "# Guide\n\nrewritten intro paragraph.\n\n" + chunk_body
+        _write(project_dir / "guide.md", edited)
+
+        result = reindex(
+            config=cfg,
+            annotations=ann,
+            store=store,
+            store_dir=store_dir,
+            now=_frozen_now,
+            enricher=None,
+        )
+
+        # No new Claude calls happened (enricher is None) yet the unchanged
+        # chunk's enrichment was restored from the cache.
+        assert result.enriched_chunks == 0
+        assert result.enrichment_cache_hits >= 1
+        cached_hits = store.query("вебхуккеш")
+        assert any(h.document_id == "proj:guide.md" for h in cached_hits)
     finally:
         store.close()

@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     chunk_order INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     summary TEXT,
+    enrichment TEXT,
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 )
 """
@@ -62,6 +63,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     title,
     heading_path,
     body,
+    enrichment,
     tags,
     tokenize='porter unicode61'
 )
@@ -75,6 +77,15 @@ CREATE TABLE IF NOT EXISTS discover_cache (
     model TEXT NOT NULL,
     generated_at TEXT NOT NULL,
     PRIMARY KEY (path, content_hash)
+)
+"""
+
+ENRICHMENT_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS enrichment_cache (
+    content_hash TEXT PRIMARY KEY,
+    enrichment_json TEXT NOT NULL,
+    model TEXT NOT NULL,
+    generated_at TEXT NOT NULL
 )
 """
 
@@ -95,9 +106,44 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(CHUNKS_DDL)
         conn.execute(DOCUMENTS_FTS_DDL)
         conn.execute(DISCOVER_CACHE_DDL)
+        conn.execute(ENRICHMENT_CACHE_DDL)
         for stmt in INDEX_DDL:
             conn.execute(stmt)
         chunk_columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
         if "summary" not in chunk_columns:
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE chunks ADD COLUMN summary TEXT")
+        if "enrichment" not in chunk_columns:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE chunks ADD COLUMN enrichment TEXT")
+        _migrate_documents_fts(conn)
+
+
+def _migrate_documents_fts(conn: sqlite3.Connection) -> None:
+    fts_columns = [
+        row[1] for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()
+    ]
+    if "enrichment" in fts_columns:
+        return
+    conn.execute("DROP TABLE IF EXISTS documents_fts")
+    conn.execute(DOCUMENTS_FTS_DDL)
+    conn.execute(
+        """
+        INSERT INTO documents_fts (
+            chunk_id, document_id, title, heading_path, body, enrichment, tags
+        )
+        SELECT
+            c.id,
+            c.document_id,
+            d.title,
+            REPLACE(REPLACE(REPLACE(c.heading_path, '[', ''), ']', ''), '"', ''),
+            c.body,
+            COALESCE(c.enrichment, ''),
+            COALESCE(
+                (SELECT GROUP_CONCAT(t.tag, ' ') FROM tags t WHERE t.doc_id = d.id),
+                ''
+            )
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        """
+    )
