@@ -575,6 +575,17 @@ def discover(
             help="Seconds without Claude output before aborting; 0 disables the watchdog.",
         ),
     ] = 300.0,
+    no_cache: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache",
+            help=(
+                "Bypass the discover cache for reads (force re-running Claude on every file). "
+                "Cache is still populated on success. Use this if kind_rules or the prompt "
+                "have changed."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run Claude to populate annotations-config.yaml from project markdown files."""
     flag = ctx.obj.get("store") if ctx.obj else None
@@ -641,29 +652,41 @@ def discover(
     )
 
     runner = _discover_runner_factory(idle_timeout)
+
+    try:
+        store = SqliteStore(store_dir / "index.sqlite")
+    except (OSError, sqlite3.Error) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
     inputs = DiscoverInputs(
         store_dir=store_dir,
         targets=targets,
         output_path=output_path,
+        store=store,
+        cache_read=not no_cache,
     )
 
     try:
-        _discover_run_func(inputs, runner)
-    except DiscoverTimedOut:
-        typer.echo("discover failed: idle timeout", err=True)
-        raise typer.Exit(code=4) from None
-    except DiscoverFailed as exc:
-        typer.echo(f"discover failed: claude exited with code {exc.exit_code}", err=True)
-        raise typer.Exit(code=2) from None
-    except DiscoverInvalidOutput as exc:
-        typer.echo(
-            f"discover failed: invalid output at {exc.path}: {exc.message}",
-            err=True,
-        )
-        raise typer.Exit(code=3) from None
-    except ClaudeNotFound:
-        typer.echo("discover failed: claude not found on PATH", err=True)
-        raise typer.Exit(code=127) from None
+        try:
+            _discover_run_func(inputs, runner)
+        except DiscoverTimedOut:
+            typer.echo("discover failed: idle timeout", err=True)
+            raise typer.Exit(code=4) from None
+        except DiscoverFailed as exc:
+            typer.echo(f"discover failed: claude exited with code {exc.exit_code}", err=True)
+            raise typer.Exit(code=2) from None
+        except DiscoverInvalidOutput as exc:
+            typer.echo(
+                f"discover failed: invalid output at {exc.path}: {exc.message}",
+                err=True,
+            )
+            raise typer.Exit(code=3) from None
+        except ClaudeNotFound:
+            typer.echo("discover failed: claude not found on PATH", err=True)
+            raise typer.Exit(code=127) from None
+    finally:
+        store.close()
 
     typer.echo(f"wrote: {output_path}")
     if not apply:

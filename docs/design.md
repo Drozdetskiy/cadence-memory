@@ -316,9 +316,19 @@ CREATE VIRTUAL TABLE documents_fts USING fts5(
   tokenize='porter unicode61'
 );
 
+CREATE TABLE discover_cache (
+  path TEXT NOT NULL,                  -- '<project>:<rel_path>' or ':<rel_path>' for globals
+  content_hash TEXT NOT NULL,
+  annotation_json TEXT NOT NULL,       -- single annotation record from the previous discover run
+  model TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  PRIMARY KEY (path, content_hash)
+);
+
 CREATE INDEX idx_documents_kind ON documents(kind);
 CREATE INDEX idx_documents_project ON documents(project);
 CREATE INDEX idx_documents_source ON documents(source_type);
+CREATE INDEX idx_discover_cache_path ON discover_cache(path);
 ```
 
 Notes:
@@ -335,10 +345,13 @@ cadence-memory init                                 # config.yaml, annotations-c
 cadence-memory reindex [--verbose]                  # rebuild the index from both configs + documents
 cadence-memory status                               # dry-run: what changed since last reindex
 
-cadence-memory discover [--project NAME] [--apply]  # see §11.1: launches Claude with a discover skill on .md files
+cadence-memory discover [--project NAME] [--apply] [--no-cache]
+                                                    # see §11.1: launches Claude with a discover skill on .md files
                                                     # without --project — all projects from config.yaml
                                                     # without --apply — writes to annotations-config.yaml.proposed
                                                     # with --apply — overwrites annotations-config.yaml
+                                                    # --no-cache — bypass per-file cache reads (cache is still
+                                                    #   repopulated); use after editing kind_rules or the prompt
 
 cadence-memory list [--kind K] [--project P] [--format json|table]
 cadence-memory query <text> [--kind K] [--project P] [--limit N] [--format json|table]

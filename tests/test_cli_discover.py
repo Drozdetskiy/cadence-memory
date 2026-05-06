@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from cadence_memory import cli
@@ -19,7 +21,11 @@ from cadence_memory.discover.runner import (
     DiscoverInvalidOutput,
     DiscoverTimedOut,
 )
-from cadence_memory.executor.claude_executor import ClaudeNotFound, ClaudeRunner
+from cadence_memory.executor.claude_executor import (
+    ClaudeNotFound,
+    ClaudeRunner,
+    RunResult,
+)
 
 runner = CliRunner()
 
@@ -325,3 +331,264 @@ def test_default_git_dirty_check_returns_false_on_nonzero_returncode(
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
     assert cli._default_git_dirty_check(tmp_path, "annotations-config.yaml") is False
+
+
+_ALL_CACHE_RECORDS: list[dict[str, object]] = [
+    {
+        "id": "alpha:README.md",
+        "path": "README.md",
+        "project": "alpha",
+        "kind": "doc",
+        "title": "Alpha Readme",
+    },
+    {
+        "id": "alpha:docs/guide.md",
+        "path": "docs/guide.md",
+        "project": "alpha",
+        "kind": "doc",
+        "title": "Guide",
+    },
+    {
+        "id": "beta:notes.md",
+        "path": "notes.md",
+        "project": "beta",
+        "kind": "doc",
+        "title": "Notes",
+    },
+]
+
+
+def _make_cache_store(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+
+    files: dict[str, Path] = {}
+
+    alpha_dir = tmp_path / "alpha"
+    (alpha_dir / "docs").mkdir(parents=True)
+    readme = alpha_dir / "README.md"
+    readme.write_text("# Alpha Readme\n\nbody\n", encoding="utf-8")
+    files["alpha:README.md"] = readme
+    guide = alpha_dir / "docs" / "guide.md"
+    guide.write_text("# Guide\n\nmore body\n", encoding="utf-8")
+    files["alpha:docs/guide.md"] = guide
+
+    beta_dir = tmp_path / "beta"
+    beta_dir.mkdir()
+    notes = beta_dir / "notes.md"
+    notes.write_text("# Notes\n\nbeta body\n", encoding="utf-8")
+    files["beta:notes.md"] = notes
+
+    config = (
+        "projects:\n"
+        f"  - name: alpha\n    path: {alpha_dir}\n"
+        f"  - name: beta\n    path: {beta_dir}\n"
+        "defaults:\n  kind: doc\n"
+    )
+    (store_dir / "config.yaml").write_text(config, encoding="utf-8")
+    return store_dir, files
+
+
+def _files_in_prompt(prompt: str) -> set[tuple[str, str]]:
+    start_marker = "Projects and files to annotate:\n\n"
+    end_marker = "\n\nWrite only the YAML"
+    start = prompt.find(start_marker)
+    end = prompt.find(end_marker)
+    block = prompt[start + len(start_marker) : end] if start >= 0 and end > 0 else ""
+    parsed = yaml.safe_load(block)
+    seen: set[tuple[str, str]] = set()
+    if isinstance(parsed, list):
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name", "")
+            if not isinstance(name, str):
+                continue
+            for rel in entry.get("files", []) or []:
+                if isinstance(rel, str):
+                    seen.add((name, rel))
+    return seen
+
+
+def _records_in_prompt(prompt: str) -> list[dict[str, object]]:
+    files = _files_in_prompt(prompt)
+    return [r for r in _ALL_CACHE_RECORDS if (r["project"], r["path"]) in files]
+
+
+class _CaptureRunner:
+    def __init__(
+        self,
+        *,
+        output_path: Path,
+        records_for: Callable[[str], list[dict[str, object]]],
+    ) -> None:
+        self._output_path = output_path
+        self._records_for = records_for
+        self.calls: list[tuple[str, Mapping[str, str]]] = []
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> RunResult:
+        captured_env: Mapping[str, str] = env if env is not None else {}
+        self.calls.append((prompt, captured_env))
+        records = self._records_for(prompt)
+        self._output_path.write_text(
+            yaml.safe_dump({"documents": records}, sort_keys=False),
+            encoding="utf-8",
+        )
+        return RunResult(output="", exit_code=0, idle_timed_out=False)
+
+
+def _install_runner_only(
+    monkeypatch: pytest.MonkeyPatch, runner_obj: ClaudeRunner
+) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def factory(idle_timeout: float) -> ClaudeRunner:
+        captured["idle_timeout"] = idle_timeout
+        return runner_obj
+
+    monkeypatch.setattr(cli, "_discover_runner_factory", factory)
+    return captured
+
+
+def _cache_count(store_dir: Path) -> int:
+    db = sqlite3.connect(str(store_dir / "index.sqlite"))
+    try:
+        row = db.execute("SELECT COUNT(*) FROM discover_cache").fetchone()
+    finally:
+        db.close()
+    return int(row[0])
+
+
+def test_discover_help_lists_no_cache_flag(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["discover", "--help"])
+    assert result.exit_code == 0
+    assert "--no-cache" in result.stdout
+
+
+def test_first_run_populates_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_dir, _files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result = runner.invoke(app, ["--store", str(store_dir), "discover"])
+
+    assert result.exit_code == 0, result.output + result.stderr
+    assert len(capture.calls) == 1
+    assert _cache_count(store_dir) == len(_ALL_CACHE_RECORDS)
+
+
+def test_second_run_skips_runner_with_full_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_dir, _files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result1 = runner.invoke(app, ["--store", str(store_dir), "discover"])
+    assert result1.exit_code == 0, result1.output + result1.stderr
+    first_records = yaml.safe_load(proposed.read_text(encoding="utf-8"))["documents"]
+    proposed.unlink()
+
+    result2 = runner.invoke(app, ["--store", str(store_dir), "discover"])
+
+    assert result2.exit_code == 0, result2.output + result2.stderr
+    assert len(capture.calls) == 1
+    second_records = yaml.safe_load(proposed.read_text(encoding="utf-8"))["documents"]
+    assert sorted(first_records, key=lambda r: r["id"]) == sorted(
+        second_records, key=lambda r: r["id"]
+    )
+
+
+def test_partial_cache_only_changed_file_in_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_dir, files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result1 = runner.invoke(app, ["--store", str(store_dir), "discover"])
+    assert result1.exit_code == 0, result1.output + result1.stderr
+    assert len(capture.calls) == 1
+
+    files["alpha:docs/guide.md"].write_text("# Edited\n\nnew body\n", encoding="utf-8")
+
+    result2 = runner.invoke(app, ["--store", str(store_dir), "discover"])
+
+    assert result2.exit_code == 0, result2.output + result2.stderr
+    assert len(capture.calls) == 2
+    assert _files_in_prompt(capture.calls[1][0]) == {("alpha", "docs/guide.md")}
+
+    final_docs = yaml.safe_load(proposed.read_text(encoding="utf-8"))["documents"]
+    assert {(d["project"], d["path"]) for d in final_docs} == {
+        ("alpha", "README.md"),
+        ("alpha", "docs/guide.md"),
+        ("beta", "notes.md"),
+    }
+
+
+def test_no_cache_flag_invokes_runner_with_all_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_dir, _files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result1 = runner.invoke(app, ["--store", str(store_dir), "discover"])
+    assert result1.exit_code == 0, result1.output + result1.stderr
+    assert len(capture.calls) == 1
+
+    result2 = runner.invoke(app, ["--store", str(store_dir), "discover", "--no-cache"])
+
+    assert result2.exit_code == 0, result2.output + result2.stderr
+    assert len(capture.calls) == 2
+    assert _files_in_prompt(capture.calls[1][0]) == {
+        ("alpha", "README.md"),
+        ("alpha", "docs/guide.md"),
+        ("beta", "notes.md"),
+    }
+    assert _cache_count(store_dir) == len(_ALL_CACHE_RECORDS)
+
+
+def test_no_cache_flag_populates_empty_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_dir, _files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result = runner.invoke(app, ["--store", str(store_dir), "discover", "--no-cache"])
+
+    assert result.exit_code == 0, result.output + result.stderr
+    assert len(capture.calls) == 1
+    assert _cache_count(store_dir) == len(_ALL_CACHE_RECORDS)
+
+
+def test_discover_cache_isolated_from_documents_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_dir, _files = _make_cache_store(tmp_path)
+    proposed = store_dir / "annotations-config.yaml.proposed"
+    capture = _CaptureRunner(output_path=proposed, records_for=_records_in_prompt)
+    _install_runner_only(monkeypatch, capture)
+
+    result = runner.invoke(app, ["--store", str(store_dir), "discover"])
+    assert result.exit_code == 0, result.output + result.stderr
+
+    db = sqlite3.connect(str(store_dir / "index.sqlite"))
+    try:
+        cache_count = db.execute("SELECT COUNT(*) FROM discover_cache").fetchone()[0]
+        doc_ids = db.execute("SELECT id FROM documents").fetchall()
+    finally:
+        db.close()
+    assert cache_count == len(_ALL_CACHE_RECORDS)
+    assert doc_ids == []

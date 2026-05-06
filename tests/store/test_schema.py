@@ -34,7 +34,13 @@ def test_init_schema_creates_all_tables(tmp_path: Path) -> None:
             ).fetchall()
         }
         # FTS5 virtual table appears in sqlite_master with type='table'.
-        for expected in ("documents", "tags", "relations", "documents_fts"):
+        for expected in (
+            "documents",
+            "tags",
+            "relations",
+            "documents_fts",
+            "discover_cache",
+        ):
             assert expected in names
     finally:
         conn.close()
@@ -54,6 +60,7 @@ def test_init_schema_creates_all_indexes(tmp_path: Path) -> None:
             "idx_documents_kind",
             "idx_documents_project",
             "idx_documents_source",
+            "idx_discover_cache_path",
         ):
             assert expected in names
     finally:

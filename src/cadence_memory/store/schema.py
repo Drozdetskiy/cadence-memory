@@ -50,10 +50,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 )
 """
 
+DISCOVER_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS discover_cache (
+    path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    annotation_json TEXT NOT NULL,
+    model TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    PRIMARY KEY (path, content_hash)
+)
+"""
+
 INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_documents_kind ON documents(kind)",
     "CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project)",
     "CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_type)",
+    "CREATE INDEX IF NOT EXISTS idx_discover_cache_path ON discover_cache(path)",
 )
 
 
@@ -63,5 +75,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(TAGS_DDL)
         conn.execute(RELATIONS_DDL)
         conn.execute(DOCUMENTS_FTS_DDL)
+        conn.execute(DISCOVER_CACHE_DDL)
         for stmt in INDEX_DDL:
             conn.execute(stmt)

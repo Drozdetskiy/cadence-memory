@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -153,6 +155,37 @@ class SqliteStore:
     def all_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT id FROM documents").fetchall()
         return {row[0] for row in rows}
+
+    def discover_cache_get(self, *, path: str, content_hash: str) -> dict[str, object] | None:
+        row = self._conn.execute(
+            "SELECT annotation_json FROM discover_cache WHERE path = ? AND content_hash = ?",
+            (path, content_hash),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(cast(str, row[0]))
+        return cast("dict[str, object]", payload)
+
+    def discover_cache_put(
+        self,
+        *,
+        path: str,
+        content_hash: str,
+        annotation_json: str,
+        model: str,
+    ) -> None:
+        generated_at = datetime.now(tz=UTC).isoformat()
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO discover_cache "
+                "(path, content_hash, annotation_json, model, generated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (path, content_hash, annotation_json, model, generated_at),
+            )
+
+    def discover_cache_clear(self) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM discover_cache")
 
     def close(self) -> None:
         self._conn.close()
