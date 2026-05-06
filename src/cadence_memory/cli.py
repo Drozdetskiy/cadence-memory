@@ -429,6 +429,10 @@ def query(
             help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
         ),
     ] = None,
+    no_boost: Annotated[
+        bool,
+        typer.Option("--no-boost", help="Disable identifier-based ranking boost."),
+    ] = False,
 ) -> None:
     """Full-text search over indexed chunks via SQLite FTS5."""
     if limit < 1:
@@ -437,7 +441,13 @@ def query(
     _, _, _, store = _load_store_context(ctx, Path.cwd())
     try:
         try:
-            chunks = store.query(text, kind=kind, project=project, limit=limit)
+            chunks = store.query(
+                text,
+                kind=kind,
+                project=project,
+                limit=limit,
+                boost=not no_boost,
+            )
         except sqlite3.Error as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=1) from exc

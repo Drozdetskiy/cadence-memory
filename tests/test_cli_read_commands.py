@@ -180,6 +180,8 @@ def test_query_json_has_chunk_shape(tmp_path: Path) -> None:
         "slug",
         "summary",
         "snippet",
+        "score",
+        "score_boost",
     }
 
 
@@ -379,6 +381,53 @@ def test_query_rejects_non_positive_limit(tmp_path: Path) -> None:
         )
         assert result.exit_code == 1, result.output
         assert "--limit" in result.output
+
+
+def test_query_help_documents_no_boost_flag() -> None:
+    result = runner.invoke(app, ["query", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--no-boost" in result.output
+
+
+def test_query_no_boost_flag_reaches_store(tmp_path: Path) -> None:
+    store_dir = tmp_path / "store"
+    project_dir = tmp_path / "proj"
+    store_dir.mkdir()
+    project_dir.mkdir()
+
+    _write(project_dir / "ticket.md", "# Ticket\n\nrelease notes ZEAL-10367 covers fix\n")
+    _write(project_dir / "filler.md", "# Filler\n\nrelease notes for the milestone\n")
+
+    config_yaml = (
+        f"projects:\n  - name: proj\n    path: {project_dir}\n"
+        "defaults:\n  kind: doc\n"
+        "enrichment:\n  enabled: false\n"
+    )
+    (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
+    (store_dir / "annotations-config.yaml").write_text(
+        "documents:\n"
+        "  - id: proj:ticket.md\n    project: proj\n    path: ticket.md\n    kind: doc\n"
+        "  - id: proj:filler.md\n    project: proj\n    path: filler.md\n    kind: doc\n",
+        encoding="utf-8",
+    )
+    seed = runner.invoke(app, ["--store", str(store_dir), "reindex"])
+    assert seed.exit_code == 0, seed.output
+
+    query_args = ["--store", str(store_dir), "query", '"ZEAL-10367" release', "--format", "json"]
+
+    with_boost = runner.invoke(app, [*query_args])
+    assert with_boost.exit_code == 0, with_boost.output
+    boosted = json.loads(with_boost.output)
+    boosted_for_ticket = next(e for e in boosted if e["chunk_id"].startswith("proj:ticket.md"))
+    assert boosted_for_ticket["score_boost"] == 5.0
+
+    without_boost = runner.invoke(app, [*query_args, "--no-boost"])
+    assert without_boost.exit_code == 0, without_boost.output
+    unboosted = json.loads(without_boost.output)
+    for entry in unboosted:
+        assert entry["score_boost"] == 0.0
+        assert isinstance(entry["score"], float)
 
 
 def test_get_rejects_format_flag(tmp_path: Path) -> None:

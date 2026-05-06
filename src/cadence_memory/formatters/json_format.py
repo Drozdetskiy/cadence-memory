@@ -59,6 +59,8 @@ def _chunk_to_dict(chunk: StoredChunk) -> dict[str, Any]:
         "slug": chunk.slug,
         "summary": summary,
         "snippet": _chunk_snippet(chunk.body),
+        "score": chunk.score,
+        "score_boost": chunk.score_boost,
     }
 
 
