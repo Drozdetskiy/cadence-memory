@@ -20,7 +20,7 @@ from cadence_memory.config import (
 from cadence_memory.documents.chunker import Chunk
 from cadence_memory.enrichment.interface import EnrichmentResult
 from cadence_memory.reindex.engine import ReindexError, reindex
-from cadence_memory.store.interface import StoredChunk, StoredDocument
+from cadence_memory.store.interface import Mention, StoredChunk, StoredDocument
 from cadence_memory.store.sqlite_store import SqliteStore
 
 
@@ -85,6 +85,7 @@ class _CountingStore:
         self.upsert_chunk_enrichment_calls: list[tuple[str, str]] = []
         self.enrichment_cache_get_calls: list[str] = []
         self.enrichment_cache_put_calls: list[dict[str, str]] = []
+        self.upsert_mentions_calls: list[tuple[str, tuple[Mention, ...]]] = []
 
     def upsert(self, doc: StoredDocument) -> None:
         self.upsert_calls.append(doc)
@@ -128,6 +129,16 @@ class _CountingStore:
 
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()
+
+    def upsert_mentions(self, chunk_id: str, mentions: Sequence[Mention]) -> None:
+        self.upsert_mentions_calls.append((chunk_id, tuple(mentions)))
+        self.inner.upsert_mentions(chunk_id, mentions)
+
+    def get_mentions(self, chunk_id: str) -> list[Mention]:
+        return self.inner.get_mentions(chunk_id)
+
+    def find_backlinks(self, target: str, *, target_kind: str | None = None) -> list[StoredChunk]:
+        return self.inner.find_backlinks(target, target_kind=target_kind)
 
     def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
         self.upsert_chunk_enrichment_calls.append((chunk_id, enrichment_text))
@@ -938,8 +949,7 @@ def test_reindex_with_enricher_populates_chunks_and_fts(tmp_path: Path) -> None:
         stored_chunks = store.get_chunks("proj:guide.md")
         assert stored_chunks
         assert all(
-            chunk.enrichment is not None and "вебхук" in chunk.enrichment
-            for chunk in stored_chunks
+            chunk.enrichment is not None and "вебхук" in chunk.enrichment for chunk in stored_chunks
         )
 
         hits = store.query("вебхук")
@@ -1254,5 +1264,121 @@ def test_no_enrichment_repopulates_chunks_from_cache(tmp_path: Path) -> None:
         assert result.enrichment_cache_hits >= 1
         cached_hits = store.query("вебхуккеш")
         assert any(h.document_id == "proj:guide.md" for h in cached_hits)
+    finally:
+        store.close()
+
+
+def test_reindex_extracts_mentions_for_inserted_doc(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        body = (
+            "# Guide\n\n"
+            "Reference src/foo.py:42 and `BillingEntity`.\n"
+            "Call GET /api/v1/users for the list. See [link](other.md).\n"
+        )
+        _write(project_dir / "guide.md", body)
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+
+        chunks = store.get_chunks("proj:guide.md")
+        assert chunks
+        first_chunk_id = chunks[0].id
+        mentions = store.get_mentions(first_chunk_id)
+        assert Mention(target="src/foo.py", target_kind="code", line_range="42") in mentions
+        assert Mention(target="GET /api/v1/users", target_kind="endpoint") in mentions
+        assert Mention(target="BillingEntity", target_kind="schema") in mentions
+        assert Mention(target="other.md", target_kind="doc") in mentions
+        assert any(call[0] == first_chunk_id for call in store.upsert_mentions_calls)
+    finally:
+        store.close()
+
+
+def test_reindex_replaces_mentions_when_body_edited(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        md = project_dir / "guide.md"
+        _write(
+            md,
+            "# Guide\n\nReference src/foo.py and call GET /api/v1/users.\n",
+        )
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:guide.md", project="proj", path="guide.md"),)
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+        first_chunk_id = store.get_chunks("proj:guide.md")[0].id
+        before = store.get_mentions(first_chunk_id)
+        assert any(m.target == "GET /api/v1/users" for m in before)
+
+        _write(md, "# Guide\n\nReference src/foo.py only.\n")
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+
+        after = store.get_mentions(first_chunk_id)
+        assert any(m.target == "src/foo.py" for m in after)
+        assert all(m.target != "GET /api/v1/users" for m in after)
+    finally:
+        store.close()
+
+
+def test_reindex_does_not_re_extract_mentions_on_metadata_only_update(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        md = project_dir / "doc.md"
+        _write(
+            md,
+            "---\nkind: pattern\n---\n# Title\n\nReference src/foo.py here.\n",
+        )
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann = AnnotationsConfig(
+            documents=(_entry(id="proj:doc.md", project="proj", path="doc.md"),)
+        )
+
+        reindex(config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now)
+        first_chunk_id = store.get_chunks("proj:doc.md")[0].id
+        baseline = store.get_mentions(first_chunk_id)
+        assert any(m.target == "src/foo.py" for m in baseline)
+        upsert_mentions_calls_first = list(store.upsert_mentions_calls)
+
+        _write(md, "---\nkind: service\n---\n# Title\n\nReference src/foo.py here.\n")
+        result = reindex(
+            config=cfg, annotations=ann, store=store, store_dir=store_dir, now=_frozen_now
+        )
+
+        assert result.updated_metadata_only == ("proj:doc.md",)
+        assert result.updated_content == ()
+        # No new upsert_mentions calls because chunks were not rebuilt.
+        assert store.upsert_mentions_calls == upsert_mentions_calls_first
+        assert store.get_mentions(first_chunk_id) == baseline
+    finally:
+        store.close()
+
+
+def test_reindex_deletes_mentions_when_doc_removed(tmp_path: Path) -> None:
+    store_dir, project_dir, _db, store = _setup(tmp_path)
+    try:
+        _write(project_dir / "a.md", "# A\n\nSee src/foo.py for details.\n")
+        cfg = _make_config(_make_project("proj", project_dir))
+        ann_full = AnnotationsConfig(
+            documents=(_entry(id="proj:a.md", project="proj", path="a.md"),)
+        )
+        ann_empty = AnnotationsConfig(documents=())
+
+        reindex(config=cfg, annotations=ann_full, store=store, store_dir=store_dir, now=_frozen_now)
+        first_chunk_id = store.get_chunks("proj:a.md")[0].id
+        assert store.get_mentions(first_chunk_id), "expected mentions before delete"
+
+        reindex(
+            config=cfg, annotations=ann_empty, store=store, store_dir=store_dir, now=_frozen_now
+        )
+
+        # Document is gone, chunks cascaded, mentions cascaded.
+        assert store.get_chunks("proj:a.md") == []
+        assert store.get_mentions(first_chunk_id) == []
+        assert store.find_backlinks("src/foo.py") == []
     finally:
         store.close()

@@ -19,7 +19,7 @@ from cadence_memory.config import (
 from cadence_memory.documents.chunker import Chunk
 from cadence_memory.reindex.diff import diff
 from cadence_memory.reindex.engine import ReindexError, reindex
-from cadence_memory.store.interface import StoredChunk, StoredDocument
+from cadence_memory.store.interface import Mention, StoredChunk, StoredDocument
 from cadence_memory.store.sqlite_store import SqliteStore
 
 
@@ -120,6 +120,15 @@ class _CountingStore:
 
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()
+
+    def upsert_mentions(self, chunk_id: str, mentions: Sequence[Mention]) -> None:
+        self.inner.upsert_mentions(chunk_id, mentions)
+
+    def get_mentions(self, chunk_id: str) -> list[Mention]:
+        return self.inner.get_mentions(chunk_id)
+
+    def find_backlinks(self, target: str, *, target_kind: str | None = None) -> list[StoredChunk]:
+        return self.inner.find_backlinks(target, target_kind=target_kind)
 
     def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
         self.inner.upsert_chunk_enrichment(chunk_id, enrichment_text)

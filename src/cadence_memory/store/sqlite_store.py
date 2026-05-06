@@ -11,7 +11,7 @@ from typing import Literal, cast
 
 from cadence_memory.documents.chunker import Chunk
 from cadence_memory.documents.hashes import chunk_content_hash
-from cadence_memory.store.interface import StoredChunk, StoredDocument
+from cadence_memory.store.interface import Mention, MentionKind, StoredChunk, StoredDocument
 from cadence_memory.store.schema import init_schema
 
 __all__ = ["SqliteStore"]
@@ -21,6 +21,7 @@ _SourceType = Literal["project", "global", "ephemeral"]
 
 type _DocList = list[StoredDocument]
 type _ChunkList = list[StoredChunk]
+type _MentionList = list[Mention]
 
 
 class SqliteStore:
@@ -308,6 +309,57 @@ class SqliteStore:
     def discover_cache_clear(self) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM discover_cache")
+
+    def upsert_mentions(self, chunk_id: str, mentions: Sequence[Mention]) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM mentions WHERE chunk_id = ?", (chunk_id,))
+            if not mentions:
+                return
+            self._conn.executemany(
+                """
+                INSERT INTO mentions (chunk_id, target, target_kind, line_range)
+                VALUES (?, ?, ?, ?)
+                """,
+                [(chunk_id, m.target, m.target_kind, m.line_range) for m in mentions],
+            )
+
+    def get_mentions(self, chunk_id: str) -> _MentionList:
+        rows = self._conn.execute(
+            """
+            SELECT target, target_kind, line_range
+            FROM mentions
+            WHERE chunk_id = ?
+            ORDER BY target_kind, target, COALESCE(line_range, '')
+            """,
+            (chunk_id,),
+        ).fetchall()
+        return [
+            Mention(
+                target=cast(str, row[0]),
+                target_kind=cast(MentionKind, row[1]),
+                line_range=cast("str | None", row[2]),
+            )
+            for row in rows
+        ]
+
+    def find_backlinks(self, target: str, *, target_kind: str | None = None) -> _ChunkList:
+        clauses: list[str] = ["m.target = ?"]
+        params: list[object] = [target]
+        if target_kind is not None:
+            clauses.append("m.target_kind = ?")
+            params.append(target_kind)
+        sql = (
+            "SELECT DISTINCT c.id, c.document_id, c.slug, c.heading_path, c.body, "
+            "c.chunk_order, c.content_hash, "
+            "d.title, d.kind, d.project, c.summary, c.enrichment "
+            "FROM mentions m "
+            "JOIN chunks c ON c.id = m.chunk_id "
+            "JOIN documents d ON d.id = c.document_id "
+            "WHERE " + " AND ".join(clauses) + " "
+            "ORDER BY c.id"
+        )
+        rows = self._conn.execute(sql, params).fetchall()
+        return [self._row_to_chunk(row) for row in rows]
 
     def upsert_chunk_enrichment(self, chunk_id: str, enrichment_text: str) -> None:
         with self._conn:

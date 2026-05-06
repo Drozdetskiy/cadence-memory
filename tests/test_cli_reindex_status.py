@@ -370,9 +370,7 @@ def test_reindex_uses_claude_default_model_when_enrichment_model_unset(
     assert factory_recorder.models == ["claude-from-claude"]
 
 
-def test_reindex_flag_overrides_config(
-    tmp_path: Path, factory_recorder: _FactoryRecorder
-) -> None:
+def test_reindex_flag_overrides_config(tmp_path: Path, factory_recorder: _FactoryRecorder) -> None:
     store_dir, _ = _make_store_with_enrichment(
         tmp_path,
         enrichment_section="enrichment:\n  model: claude-from-config\n",
@@ -398,9 +396,7 @@ def test_reindex_no_enrichment_short_circuits_factory(
 ) -> None:
     store_dir, _ = _make_store_with_enrichment(tmp_path, enrichment_section=None)
 
-    result = runner.invoke(
-        app, ["--store", str(store_dir), "reindex", "--no-enrichment"]
-    )
+    result = runner.invoke(app, ["--store", str(store_dir), "reindex", "--no-enrichment"])
 
     assert result.exit_code == 0, result.output
     assert factory_recorder.models == []
