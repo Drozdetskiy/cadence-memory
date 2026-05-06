@@ -49,7 +49,7 @@ def _chunk_snippet(body: str) -> str:
 
 def _chunk_to_dict(chunk: StoredChunk) -> dict[str, Any]:
     summary = chunk.summary if chunk.summary is not None else _chunk_snippet(chunk.body)
-    return {
+    payload: dict[str, Any] = {
         "chunk_id": chunk.id,
         "document_id": chunk.document_id,
         "kind": chunk.document_kind,
@@ -62,6 +62,9 @@ def _chunk_to_dict(chunk: StoredChunk) -> dict[str, Any]:
         "score": chunk.score,
         "score_boost": chunk.score_boost,
     }
+    if chunk.score_rerank is not None:
+        payload["score_rerank"] = chunk.score_rerank
+    return payload
 
 
 def format_documents(docs: list[StoredDocument], *, include_body: bool) -> str:

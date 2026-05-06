@@ -91,8 +91,19 @@ enrichment:
 # call entirely. `model: null` falls back to `claude.default_model`.
 # `max_variants` caps how many alternatives Claude is asked to produce.
 #
+# Query-time rerank: after FTS5 + identifier boost + RRF, hand the top-K
+# candidates to Claude for relevance scoring (0–10) and re-sort the head of
+# the result list. Set `enabled: false` (or pass `--no-rerank` to `query`)
+# to skip the Claude call. `model: null` falls back to `claude.default_model`
+# (override per call with `--rerank-model`). `top_k` caps how many chunks the
+# LLM sees (override per call with `--rerank-top-k`).
+#
 # query:
 #   expansion:
 #     enabled: true
 #     model: null
 #     max_variants: 3
+#   rerank:
+#     enabled: true
+#     model: null
+#     top_k: 20

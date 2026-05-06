@@ -66,8 +66,16 @@ class ExpansionConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RerankConfig:
+    enabled: bool = True
+    model: str | None = None
+    top_k: int = 20
+
+
+@dataclass(frozen=True, slots=True)
 class QueryConfig:
     expansion: ExpansionConfig = ExpansionConfig()
+    rerank: RerankConfig = RerankConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +97,11 @@ def effective_enrichment_model(config: Config) -> str:
 def effective_expansion_model(config: Config) -> str:
     """Return query-expansion model: explicit override or claude.default_model fallback."""
     return config.query.expansion.model or config.claude.default_model
+
+
+def effective_rerank_model(config: Config) -> str:
+    """Return rerank model: explicit override or claude.default_model fallback."""
+    return config.query.rerank.model or config.claude.default_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +135,9 @@ _GLOBALS_KEYS: Final[frozenset[str]] = frozenset({"include", "exclude"})
 _DEFAULTS_KEYS: Final[frozenset[str]] = frozenset({"kind"})
 _CLAUDE_KEYS: Final[frozenset[str]] = frozenset({"default_model"})
 _ENRICHMENT_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model"})
-_QUERY_KEYS: Final[frozenset[str]] = frozenset({"expansion"})
+_QUERY_KEYS: Final[frozenset[str]] = frozenset({"expansion", "rerank"})
 _EXPANSION_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model", "max_variants"})
+_RERANK_KEYS: Final[frozenset[str]] = frozenset({"enabled", "model", "top_k"})
 _ANNOTATIONS_TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset({"documents"})
 _DOCUMENT_KEYS: Final[frozenset[str]] = frozenset(
     {"id", "project", "path", "kind", "title", "tags", "related", "optional"}
@@ -387,6 +401,54 @@ def _parse_expansion(prefix: str, data: object) -> ExpansionConfig:
     return ExpansionConfig(enabled=enabled, model=model, max_variants=max_variants)
 
 
+def _parse_rerank(prefix: str, data: object) -> RerankConfig:
+    if data is None:
+        return RerankConfig()
+    if not isinstance(data, dict):
+        raise _err(
+            prefix,
+            "query.rerank",
+            f"must be a mapping, got {type(data).__name__}",
+        )
+    typed = _as_str_keyed_dict(prefix, "query.rerank", data)
+    _check_unknown_keys(prefix, "query.rerank", typed, _RERANK_KEYS)
+
+    enabled_raw = typed.get("enabled")
+    if enabled_raw is None:
+        enabled = True
+    elif isinstance(enabled_raw, bool):
+        enabled = enabled_raw
+    else:
+        raise _err(
+            prefix,
+            "query.rerank.enabled",
+            f"must be a boolean, got {type(enabled_raw).__name__}",
+        )
+
+    model_raw = typed.get("model")
+    model = None if model_raw is None else _require_str(prefix, "query.rerank.model", model_raw)
+
+    top_k_raw = typed.get("top_k")
+    if top_k_raw is None:
+        top_k = 20
+    elif isinstance(top_k_raw, bool) or not isinstance(top_k_raw, int):
+        raise _err(
+            prefix,
+            "query.rerank.top_k",
+            f"must be an integer, got {type(top_k_raw).__name__}",
+        )
+    elif top_k_raw <= 0:
+        raise _err(
+            prefix,
+            "query.rerank.top_k",
+            f"must be a positive integer, got {top_k_raw}",
+        )
+    else:
+        top_k = top_k_raw
+
+    return RerankConfig(enabled=enabled, model=model, top_k=top_k)
+
+
 def _parse_query(prefix: str, data: object) -> QueryConfig:
     if data is None:
         return QueryConfig()
@@ -395,7 +457,8 @@ def _parse_query(prefix: str, data: object) -> QueryConfig:
     typed = _as_str_keyed_dict(prefix, "query", data)
     _check_unknown_keys(prefix, "query", typed, _QUERY_KEYS)
     expansion = _parse_expansion(prefix, typed.get("expansion"))
-    return QueryConfig(expansion=expansion)
+    rerank = _parse_rerank(prefix, typed.get("rerank"))
+    return QueryConfig(expansion=expansion, rerank=rerank)
 
 
 def _parse_defaults(prefix: str, data: object) -> Defaults:

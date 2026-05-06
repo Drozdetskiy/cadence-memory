@@ -125,6 +125,7 @@ def _make_chunk(
     summary: str | None = None,
     score: float = 0.0,
     score_boost: float = 0.0,
+    score_rerank: float | None = None,
 ) -> StoredChunk:
     return StoredChunk(
         id=chunk_id,
@@ -140,6 +141,7 @@ def _make_chunk(
         summary=summary,
         score=score,
         score_boost=score_boost,
+        score_rerank=score_rerank,
     )
 
 
@@ -271,6 +273,38 @@ def test_format_chunk_surfaces_score_and_boost() -> None:
 
     assert parsed["score"] == -1.25
     assert parsed["score_boost"] == 5.0
+
+
+def test_format_chunks_omits_score_rerank_when_none() -> None:
+    chunks = [_make_chunk(score_rerank=None)]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert "score_rerank" not in parsed[0]
+
+
+def test_format_chunks_includes_score_rerank_when_set() -> None:
+    chunks = [_make_chunk(score_rerank=8.7)]
+
+    parsed = json.loads(format_chunks(chunks, format="json"))
+
+    assert parsed[0]["score_rerank"] == 8.7
+
+
+def test_format_chunk_omits_score_rerank_when_none() -> None:
+    chunk = _make_chunk(score_rerank=None)
+
+    parsed = json.loads(format_chunk(chunk, format="json"))
+
+    assert "score_rerank" not in parsed
+
+
+def test_format_chunk_includes_score_rerank_when_set() -> None:
+    chunk = _make_chunk(score_rerank=3.25)
+
+    parsed = json.loads(format_chunk(chunk, format="json"))
+
+    assert parsed["score_rerank"] == 3.25
 
 
 def test_format_documents_preserves_all_metadata_fields() -> None:

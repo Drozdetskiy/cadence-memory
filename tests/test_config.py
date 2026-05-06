@@ -22,8 +22,10 @@ from cadence_memory.config import (
     KindRule,
     ProjectConfig,
     QueryConfig,
+    RerankConfig,
     effective_enrichment_model,
     effective_expansion_model,
+    effective_rerank_model,
     load_annotations_config,
     load_config,
 )
@@ -850,6 +852,7 @@ def test_load_config_query_expansion_defaults_when_absent(tmp_path: Path) -> Non
     cfg = load_config(config_path)
     assert cfg.query == QueryConfig(
         expansion=ExpansionConfig(enabled=True, model=None, max_variants=3),
+        rerank=RerankConfig(enabled=True, model=None, top_k=20),
     )
     assert effective_expansion_model(cfg) == "claude-haiku-4-5"
 
@@ -994,6 +997,131 @@ def test_load_config_query_expansion_max_variants_rejects_bool(tmp_path: Path) -
 
 
 # --------------------------------------------------------------------------- #
+# query.rerank section                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_load_config_query_rerank_defaults_when_absent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: []\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.query.rerank == RerankConfig(enabled=True, model=None, top_k=20)
+    assert effective_rerank_model(cfg) == "claude-haiku-4-5"
+
+
+def test_load_config_query_rerank_full_happy_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        ("query:\n  rerank:\n    enabled: false\n    model: claude-sonnet-4-6\n    top_k: 50\n"),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.rerank == RerankConfig(enabled=False, model="claude-sonnet-4-6", top_k=50)
+    assert effective_rerank_model(cfg) == "claude-sonnet-4-6"
+
+
+def test_load_config_query_rerank_null_model_falls_back(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        (
+            "claude:\n"
+            "  default_model: claude-haiku-foo\n"
+            "query:\n"
+            "  rerank:\n"
+            "    enabled: true\n"
+            "    model: null\n"
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.rerank.model is None
+    assert effective_rerank_model(cfg) == "claude-haiku-foo"
+
+
+def test_load_config_query_rerank_unknown_key_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    bogus: 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(config_path)
+    msg = str(exc_info.value)
+    assert "query.rerank.bogus" in msg
+    assert "not a known key" in msg
+
+
+def test_load_config_query_rerank_must_be_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank: not-a-mapping\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank must be a mapping"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_enabled_must_be_bool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    enabled: maybe\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank\.enabled"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_model_must_be_string(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    model: 42\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank\.model"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_top_k_must_be_int(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    top_k: many\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank\.top_k"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_top_k_must_be_positive(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    top_k: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank\.top_k"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_top_k_rejects_bool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    top_k: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"query\.rerank\.top_k"):
+        load_config(config_path)
+
+
+def test_load_config_query_rerank_explicit_null_model_round_trip(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "query:\n  rerank:\n    enabled: true\n    model: null\n    top_k: 10\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.query.rerank == RerankConfig(enabled=True, model=None, top_k=10)
+
+
+# --------------------------------------------------------------------------- #
 # Embedded default templates copied by `cadence-memory init`                  #
 # --------------------------------------------------------------------------- #
 
@@ -1020,8 +1148,10 @@ def test_default_config_template_loads(tmp_path: Path) -> None:
     assert effective_enrichment_model(cfg) == "claude-haiku-4-5"
     assert cfg.query == QueryConfig(
         expansion=ExpansionConfig(enabled=True, model=None, max_variants=3),
+        rerank=RerankConfig(enabled=True, model=None, top_k=20),
     )
     assert effective_expansion_model(cfg) == "claude-haiku-4-5"
+    assert effective_rerank_model(cfg) == "claude-haiku-4-5"
 
 
 def test_default_annotations_template_loads(tmp_path: Path) -> None:
