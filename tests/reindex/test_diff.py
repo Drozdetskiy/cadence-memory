@@ -110,13 +110,13 @@ class _CountingStore:
 
     def query(
         self,
-        text: str,
+        queries: Sequence[str],
         *,
         kind: str | None = None,
         project: str | None = None,
         limit: int = 20,
     ) -> list[StoredChunk]:
-        return self.inner.query(text, kind=kind, project=project, limit=limit)
+        return self.inner.query(queries, kind=kind, project=project, limit=limit)
 
     def all_ids(self) -> set[str]:
         return self.inner.all_ids()

@@ -33,6 +33,7 @@ def _make_seeded_store(tmp_path: Path) -> tuple[Path, Path]:
         f"projects:\n  - name: proj\n    path: {project_dir}\n"
         "defaults:\n  kind: doc\n"
         "enrichment:\n  enabled: false\n"
+        "query:\n  expansion:\n    enabled: false\n"
     )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
@@ -403,6 +404,7 @@ def test_query_no_boost_flag_reaches_store(tmp_path: Path) -> None:
         f"projects:\n  - name: proj\n    path: {project_dir}\n"
         "defaults:\n  kind: doc\n"
         "enrichment:\n  enabled: false\n"
+        "query:\n  expansion:\n    enabled: false\n"
     )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
     (store_dir / "annotations-config.yaml").write_text(
@@ -481,6 +483,7 @@ def test_get_appends_trailing_newline_when_missing(tmp_path: Path) -> None:
         f"projects:\n  - name: proj\n    path: {project_dir}\n"
         "defaults:\n  kind: doc\n"
         "enrichment:\n  enabled: false\n"
+        "query:\n  expansion:\n    enabled: false\n"
     )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
     (store_dir / "annotations-config.yaml").write_text(

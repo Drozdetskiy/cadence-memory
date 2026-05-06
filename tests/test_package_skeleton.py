@@ -49,6 +49,7 @@ _RESOURCE_FILES = [
     "annotations-config.yaml",
     "gitignore",
     "prompts/discover.txt",
+    "prompts/expansion.txt",
     "skills/cadence-memory.md",
     "skills/cadence-memory-discover.md",
 ]

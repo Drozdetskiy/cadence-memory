@@ -86,7 +86,7 @@ class Store(Protocol):
 
     def query(
         self,
-        text: str,
+        queries: Sequence[str],
         *,
         kind: str | None = None,
         project: str | None = None,
@@ -125,6 +125,17 @@ class Store(Protocol):
         content_hash: str,
         enrichment_json: str,
         model: str,
+        generated_at: str,
+    ) -> None: ...
+
+    def expansion_cache_get(self, query_text: str, model: str) -> dict[str, object] | None: ...
+
+    def expansion_cache_put(
+        self,
+        *,
+        query_text: str,
+        model: str,
+        variants_json: str,
         generated_at: str,
     ) -> None: ...
 

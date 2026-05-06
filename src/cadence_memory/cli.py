@@ -28,6 +28,7 @@ from cadence_memory.config import (
     ConfigError,
     ProjectConfig,
     effective_enrichment_model,
+    effective_expansion_model,
     load_annotations_config,
     load_config,
 )
@@ -56,10 +57,11 @@ from cadence_memory.formatters import (
     format_document,
     format_documents,
 )
+from cadence_memory.query.expansion import ClaudeQueryExpander, QueryExpander
 from cadence_memory.reindex.diff import diff as diff_reindex
 from cadence_memory.reindex.engine import ReindexError, ReindexResult
 from cadence_memory.reindex.engine import reindex as run_reindex
-from cadence_memory.store.interface import Mention, StoredChunk
+from cadence_memory.store.interface import Mention, Store, StoredChunk
 from cadence_memory.store.sqlite_store import SqliteStore
 from cadence_memory.store_locator import StoreNotFoundError, resolve_store_dir
 
@@ -273,6 +275,17 @@ def _default_enricher_factory(model: str, idle_timeout: float) -> Enricher:
 _enricher_factory: Callable[[str, float], Enricher] = _default_enricher_factory
 
 
+def _default_expander_factory(model: str, store: Store) -> QueryExpander:
+    runner = StreamingClaudeRunner(
+        idle_timeout=60.0,
+        output_handler=lambda chunk: typer.echo(chunk, nl=False, err=True),
+    )
+    return ClaudeQueryExpander(runner=runner, model=model, store=store)
+
+
+_expander_factory: Callable[[str, Store], QueryExpander] = _default_expander_factory
+
+
 def _resolve_enricher(
     *,
     config: Config,
@@ -433,16 +446,60 @@ def query(
         bool,
         typer.Option("--no-boost", help="Disable identifier-based ranking boost."),
     ] = False,
+    no_expand: Annotated[
+        bool,
+        typer.Option(
+            "--no-expand",
+            help="Skip Claude-based query expansion for this run.",
+        ),
+    ] = False,
+    expansion_model: Annotated[
+        str | None,
+        typer.Option(
+            "--expansion-model",
+            help=(
+                "Override the Claude model used for query expansion. "
+                "Falls back to config.query.expansion.model, then config.claude.default_model."
+            ),
+        ),
+    ] = None,
+    variants: Annotated[
+        int,
+        typer.Option(
+            "--variants",
+            help=(
+                "Maximum number of expansion variants to request. "
+                "0 (default) uses config.query.expansion.max_variants."
+            ),
+        ),
+    ] = 0,
 ) -> None:
     """Full-text search over indexed chunks via SQLite FTS5."""
     if limit < 1:
         typer.echo("error: --limit must be >= 1", err=True)
         raise typer.Exit(code=1)
-    _, _, _, store = _load_store_context(ctx, Path.cwd())
+    if variants < 0:
+        typer.echo("error: --variants must be >= 0", err=True)
+        raise typer.Exit(code=1)
+    _, cfg, _, store = _load_store_context(ctx, Path.cwd())
     try:
+        expansion_enabled = (not no_expand) and cfg.query.expansion.enabled
+        if expansion_enabled:
+            max_variants = variants if variants > 0 else cfg.query.expansion.max_variants
+            model = expansion_model or effective_expansion_model(cfg)
+            expander = _expander_factory(model, store)
+            result = expander.expand(text, max_variants=max_variants)
+            queries: tuple[str, ...] = result.variants
+            if len(queries) > 1:
+                typer.echo(
+                    f"expanded into {len(queries)} variants: {list(queries)}",
+                    err=True,
+                )
+        else:
+            queries = (text,)
         try:
             chunks = store.query(
-                text,
+                queries,
                 kind=kind,
                 project=project,
                 limit=limit,
