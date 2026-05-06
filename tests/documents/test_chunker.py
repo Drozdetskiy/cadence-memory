@@ -51,15 +51,15 @@ def test_chunk_markdown_empty_body_returns_single_preamble() -> None:
 
 def test_chunk_markdown_h1_h2_h3_structure() -> None:
     body = (
-        "Intro paragraph.\n\n"
+        "Intro paragraph that is long enough to clear the summary minimum.\n\n"
         "# Title\n\n"
-        "Lead-in.\n\n"
+        "Lead-in paragraph that is long enough to clear the summary minimum.\n\n"
         "## First Section\n\n"
-        "Section body.\n\n"
+        "Section body that is long enough to clear the summary minimum.\n\n"
         "### Subsection\n\n"
         "Sub body.\n\n"
         "## Second Section\n\n"
-        "Second body.\n"
+        "Second body that is long enough to clear the summary minimum.\n"
     )
     chunks = chunk_markdown(body)
     assert chunks[0].slug == "_preamble"
@@ -71,6 +71,10 @@ def test_chunk_markdown_h1_h2_h3_structure() -> None:
     assert chunks[3].heading_path == ("Title", "Second Section")
     assert "### Subsection" in chunks[2].body
     assert [c.order for c in chunks] == list(range(len(chunks)))
+    assert chunks[0].summary is not None
+    assert "Intro paragraph" in chunks[0].summary
+    assert chunks[2].summary is not None
+    assert "Section body" in chunks[2].summary
 
 
 def test_chunk_markdown_bold_title_then_h1_keeps_preamble_with_bold() -> None:
@@ -90,15 +94,7 @@ def test_chunk_markdown_preamble_extended_to_500_bytes_when_heading_near_start()
 
 
 def test_chunk_markdown_code_fence_with_faux_heading_not_split() -> None:
-    body = (
-        "# Real\n\n"
-        "Some text.\n\n"
-        "```\n"
-        "## Faux Heading\n"
-        "code line\n"
-        "```\n\n"
-        "More text.\n"
-    )
+    body = "# Real\n\nSome text.\n\n```\n## Faux Heading\ncode line\n```\n\nMore text.\n"
     chunks = chunk_markdown(body)
     assert [c.slug for c in chunks] == ["_preamble", "real"]
     real = chunks[1]
@@ -107,13 +103,7 @@ def test_chunk_markdown_code_fence_with_faux_heading_not_split() -> None:
 
 
 def test_chunk_markdown_duplicate_h2_gets_suffix() -> None:
-    body = (
-        "# Doc\n\n"
-        "## Overview\n\n"
-        "First overview.\n\n"
-        "## Overview\n\n"
-        "Second overview.\n"
-    )
+    body = "# Doc\n\n## Overview\n\nFirst overview.\n\n## Overview\n\nSecond overview.\n"
     chunks = chunk_markdown(body)
     slugs = [c.slug for c in chunks[1:]]
     assert slugs == ["doc", "overview", "overview-2"]
@@ -121,15 +111,7 @@ def test_chunk_markdown_duplicate_h2_gets_suffix() -> None:
 
 def test_chunk_markdown_long_h2_subsplit_by_h3() -> None:
     para = "lorem ipsum " * 200
-    body = (
-        "# Doc\n\n"
-        "## Big Section\n\n"
-        f"{para}\n\n"
-        "### Sub A\n\n"
-        f"{para}\n\n"
-        "### Sub B\n\n"
-        f"{para}\n"
-    )
+    body = f"# Doc\n\n## Big Section\n\n{para}\n\n### Sub A\n\n{para}\n\n### Sub B\n\n{para}\n"
     chunks = chunk_markdown(body, max_tokens=100)
     big_chunks = [c for c in chunks if c.slug.startswith("big-section")]
     assert len(big_chunks) >= 2
@@ -152,13 +134,7 @@ def test_chunk_markdown_long_headingless_body_subsplit_into_preamble_pieces() ->
 
 def test_chunk_markdown_long_section_no_h3_splits_by_paragraphs() -> None:
     paragraph = "word " * 300
-    body = (
-        "# Doc\n\n"
-        "## Long\n\n"
-        f"{paragraph}\n\n"
-        f"{paragraph}\n\n"
-        f"{paragraph}\n"
-    )
+    body = f"# Doc\n\n## Long\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n"
     chunks = chunk_markdown(body, max_tokens=200)
     long_chunks = [c for c in chunks if c.slug.startswith("long")]
     assert len(long_chunks) >= 2
@@ -189,12 +165,32 @@ def test_chunk_markdown_default_max_tokens_constant() -> None:
 
 
 def test_chunk_dataclass_is_frozen() -> None:
-    c = Chunk(slug="x", heading_path=("a",), body="b", order=0)
+    c = Chunk(slug="x", heading_path=("a",), body="b", order=0, summary=None)
     try:
         c.slug = "y"  # type: ignore[misc]
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return
     raise AssertionError("Chunk must be frozen")
+
+
+def test_chunk_summary_default_is_none() -> None:
+    c = Chunk(slug="x", heading_path=("a",), body="b", order=0)
+    assert c.summary is None
+
+
+def test_chunk_markdown_populates_summary_for_preamble_and_section() -> None:
+    body = (
+        "An introductory paragraph that easily clears the summary minimum length.\n\n"
+        "# Title\n\n"
+        "## Section\n\n"
+        "A meaningful section paragraph that easily clears the minimum length.\n"
+    )
+    chunks = chunk_markdown(body)
+    by_slug = {c.slug: c for c in chunks}
+    assert by_slug["_preamble"].summary is not None
+    assert "introductory paragraph" in by_slug["_preamble"].summary
+    assert by_slug["section"].summary is not None
+    assert "meaningful section paragraph" in by_slug["section"].summary
 
 
 def test_chunk_markdown_heading_with_punctuation_slugified() -> None:

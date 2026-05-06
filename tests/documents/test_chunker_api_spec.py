@@ -75,6 +75,18 @@ def test_api_spec_curly_brace_path_slug_normalised() -> None:
     assert "delete-v1-customers-id" in slugs
 
 
+def test_api_spec_endpoint_chunks_carry_summary() -> None:
+    body = (
+        "# Billing Engine API\n\n"
+        "## GET /v1/customers\n\n"
+        "Purpose: list every customer in the billing engine ledger.\n"
+    )
+    chunks = chunk_markdown(body, kind="api-spec")
+    endpoint = next(c for c in chunks if c.slug == "get-v1-customers")
+    assert endpoint.summary is not None
+    assert "list every customer" in endpoint.summary
+
+
 @pytest.mark.parametrize("schemas_title", ["Schemas", "Models", "Components"])
 def test_api_spec_schemas_variants_recognised(schemas_title: str) -> None:
     body = f"# API\n\n## GET /v1/foo\nGet foo.\n\n## {schemas_title}\nSchema body.\n"
@@ -232,15 +244,7 @@ def test_api_spec_endpoint_header_after_schemas_folds_into_schemas() -> None:
 def test_api_spec_schemas_before_endpoints_falls_back(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    body = (
-        "# API\n"
-        "\n"
-        "## Schemas\n"
-        "schema body.\n"
-        "\n"
-        "## GET /v1/foo\n"
-        "foo body after schemas.\n"
-    )
+    body = "# API\n\n## Schemas\nschema body.\n\n## GET /v1/foo\nfoo body after schemas.\n"
     chunks = chunk_markdown(body, kind="api-spec")
     captured = capsys.readouterr()
     assert "warn:" in captured.err

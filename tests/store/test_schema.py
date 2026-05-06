@@ -51,10 +51,7 @@ def test_init_schema_creates_chunk_shaped_fts(tmp_path: Path) -> None:
     conn = _open(tmp_path)
     try:
         init_schema(conn)
-        cols = [
-            row[1]
-            for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()
-        ]
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(documents_fts)").fetchall()]
         for expected in ("chunk_id", "document_id", "title", "heading_path", "body", "tags"):
             assert expected in cols
     finally:
@@ -65,10 +62,7 @@ def test_init_schema_creates_chunks_table_with_columns(tmp_path: Path) -> None:
     conn = _open(tmp_path)
     try:
         init_schema(conn)
-        cols = {
-            row[1]: row[2]
-            for row in conn.execute("PRAGMA table_info(chunks)").fetchall()
-        }
+        cols = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
         for expected in (
             "id",
             "document_id",
@@ -77,10 +71,65 @@ def test_init_schema_creates_chunks_table_with_columns(tmp_path: Path) -> None:
             "body",
             "chunk_order",
             "content_hash",
+            "summary",
         ):
             assert expected in cols
     finally:
         conn.close()
+
+
+def test_init_schema_upgrades_legacy_chunks_table(tmp_path: Path) -> None:
+    legacy_ddl = """
+    CREATE TABLE chunks (
+        id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        heading_path TEXT NOT NULL,
+        body TEXT NOT NULL,
+        chunk_order INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    )
+    """
+    legacy_path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(str(legacy_path))
+    try:
+        legacy.execute(legacy_ddl)
+        legacy.execute(
+            "INSERT INTO chunks (id, document_id, slug, heading_path, body, "
+            "chunk_order, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("c1", "d1", "intro", "[]", "legacy body", 0, "hash"),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = sqlite3.connect(str(legacy_path))
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        init_schema(conn)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+        assert "summary" in cols
+        row = conn.execute(
+            "SELECT id, document_id, slug, body, summary FROM chunks WHERE id = ?", ("c1",)
+        ).fetchone()
+        assert row == ("c1", "d1", "intro", "legacy body", None)
+
+        snapshot_after_first = _master_snapshot(conn)
+        init_schema(conn)
+        snapshot_after_second = _master_snapshot(conn)
+        assert snapshot_after_first == snapshot_after_second
+    finally:
+        conn.close()
+
+    fresh = _open(tmp_path)
+    try:
+        init_schema(fresh)
+        fresh_cols = {row[1] for row in fresh.execute("PRAGMA table_info(chunks)").fetchall()}
+    finally:
+        fresh.close()
+
+    assert cols == fresh_cols
 
 
 def test_init_schema_creates_all_indexes(tmp_path: Path) -> None:
