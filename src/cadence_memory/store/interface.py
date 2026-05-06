@@ -56,4 +56,17 @@ class Store(Protocol):
 
     def all_ids(self) -> set[str]: ...
 
+    def discover_cache_get(self, *, path: str, content_hash: str) -> dict[str, object] | None: ...
+
+    def discover_cache_put(
+        self,
+        *,
+        path: str,
+        content_hash: str,
+        annotation_json: str,
+        model: str,
+    ) -> None: ...
+
+    def discover_cache_clear(self) -> None: ...
+
     def close(self) -> None: ...

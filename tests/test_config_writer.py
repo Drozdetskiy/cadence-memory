@@ -22,13 +22,9 @@ def test_add_project_happy_path(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path, "projects: []\n")
 
     writer = ConfigWriter(config_path)
-    result = writer.add_project(
-        name="demo", path=Path("/tmp/demo"), exclude=("foo/**",)
-    )
+    result = writer.add_project(name="demo", path=Path("/tmp/demo"), exclude=("foo/**",))
 
-    assert result == ProjectAddResult(
-        name="demo", path=Path("/tmp/demo"), added=True
-    )
+    assert result == ProjectAddResult(name="demo", path=Path("/tmp/demo"), added=True)
     cfg = load_config(config_path)
     assert len(cfg.projects) == 1
     assert cfg.projects[0].name == "demo"
@@ -36,13 +32,7 @@ def test_add_project_happy_path(tmp_path: Path) -> None:
 
 
 def test_add_project_preserves_leading_comment(tmp_path: Path) -> None:
-    body = (
-        "# top-of-file note\n"
-        "# more lines about projects\n"
-        "projects: []\n"
-        "defaults:\n"
-        "  kind: doc\n"
-    )
+    body = "# top-of-file note\n# more lines about projects\nprojects: []\ndefaults:\n  kind: doc\n"
     config_path = _write_config(tmp_path, body)
 
     writer = ConfigWriter(config_path)
@@ -56,12 +46,7 @@ def test_add_project_preserves_leading_comment(tmp_path: Path) -> None:
 def test_add_project_duplicate_returns_added_false_and_does_not_rewrite(
     tmp_path: Path,
 ) -> None:
-    body = (
-        "projects:\n"
-        "  - name: demo\n"
-        "    path: /tmp/demo\n"
-        "    exclude: []\n"
-    )
+    body = "projects:\n  - name: demo\n    path: /tmp/demo\n    exclude: []\n"
     config_path = _write_config(tmp_path, body)
     before = config_path.read_text(encoding="utf-8")
     before_mtime = config_path.stat().st_mtime_ns
@@ -97,12 +82,7 @@ def test_remove_project_happy_path_preserves_sibling(tmp_path: Path) -> None:
 def test_remove_project_missing_returns_false_and_does_not_rewrite(
     tmp_path: Path,
 ) -> None:
-    body = (
-        "projects:\n"
-        "  - name: keep\n"
-        "    path: /tmp/keep\n"
-        "    exclude: []\n"
-    )
+    body = "projects:\n  - name: keep\n    path: /tmp/keep\n    exclude: []\n"
     config_path = _write_config(tmp_path, body)
     before = config_path.read_text(encoding="utf-8")
     before_mtime = config_path.stat().st_mtime_ns
@@ -129,9 +109,7 @@ def test_add_project_explicit_exclude_writes_verbatim(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path, "projects: []\n")
 
     writer = ConfigWriter(config_path)
-    writer.add_project(
-        name="demo", path=Path("/tmp/demo"), exclude=["custom/**", "other/**"]
-    )
+    writer.add_project(name="demo", path=Path("/tmp/demo"), exclude=["custom/**", "other/**"])
 
     cfg = load_config(config_path)
     assert cfg.projects[0].exclude == ("custom/**", "other/**")

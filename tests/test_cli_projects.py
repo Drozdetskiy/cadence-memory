@@ -153,9 +153,7 @@ def test_projects_list_json_returns_array(tmp_path: Path) -> None:
     project_dir = _make_project_dir(tmp_path)
     runner.invoke(app, ["--store", str(store_dir), "projects", "add", "demo", str(project_dir)])
 
-    result = runner.invoke(
-        app, ["--store", str(store_dir), "projects", "list", "--format", "json"]
-    )
+    result = runner.invoke(app, ["--store", str(store_dir), "projects", "list", "--format", "json"])
 
     assert result.exit_code == 0, result.output + result.stderr
     payload = json.loads(result.stdout)
@@ -467,12 +465,8 @@ def test_projects_autodetect_apply_zero_when_all_registered(tmp_path: Path) -> N
     repo_a = _make_repo(code, "a")
     repo_b = _make_repo(code, "b")
 
-    runner.invoke(
-        app, ["--store", str(store_dir), "projects", "add", "a", str(repo_a)]
-    )
-    runner.invoke(
-        app, ["--store", str(store_dir), "projects", "add", "b", str(repo_b)]
-    )
+    runner.invoke(app, ["--store", str(store_dir), "projects", "add", "a", str(repo_a)])
+    runner.invoke(app, ["--store", str(store_dir), "projects", "add", "b", str(repo_b)])
 
     result = runner.invoke(
         app,
