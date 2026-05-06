@@ -74,7 +74,7 @@ class AnnotationsConfig:
 
 _PROJECT_NAME_RE: Final = re.compile(r"^[a-z0-9_-]+$")
 _VALID_KINDS: Final[frozenset[str]] = frozenset(
-    {"service", "pattern", "adr", "glossary", "task", "doc"}
+    {"service", "pattern", "adr", "glossary", "task", "doc", "api-spec"}
 )
 _TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset(
     {"projects", "globals", "defaults", "commit_index"}

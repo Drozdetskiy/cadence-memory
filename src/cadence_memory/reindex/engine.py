@@ -209,7 +209,7 @@ def reindex(
     for doc in planned_upserts:
         store.upsert(doc)
         if doc.id in chunk_rebuild_ids:
-            store.upsert_chunks(doc.id, chunk_markdown(doc.body))
+            store.upsert_chunks(doc.id, chunk_markdown(doc.body, kind=doc.kind, doc_id=doc.id))
     for doc_id in result.deleted:
         logger.warning("reindex: deleting orphan document id=%s", doc_id)
         store.delete(doc_id)

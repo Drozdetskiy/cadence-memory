@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 
 DEFAULT_MAX_CHUNK_TOKENS = 2000
 _PREAMBLE_SLUG = "_preamble"
+_SCHEMAS_SLUG = "_schemas"
 _PREAMBLE_MIN_BYTES = 500
 
 _H1_RE = re.compile(r"^#\s+(.+?)\s*$")
@@ -14,6 +16,8 @@ _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _H3_RE = re.compile(r"^###\s+(.+?)\s*$")
 _CODE_FENCE_RE = re.compile(r"^\s*```")
 _SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+ENDPOINT_HEADER_RE = re.compile(r"^##\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(/\S+)")
+_SCHEMA_SECTION_TITLES = frozenset({"schemas", "models", "components"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +137,18 @@ def _split_by_paragraphs(body: str, max_tokens: int) -> list[str]:
 def chunk_markdown(
     body: str,
     *,
+    kind: str | None = None,
+    doc_id: str | None = None,
+    max_tokens: int = DEFAULT_MAX_CHUNK_TOKENS,
+) -> list[Chunk]:
+    if kind == "api-spec":
+        return _chunk_api_spec(body, doc_id=doc_id, max_tokens=max_tokens)
+    return _chunk_generic(body, max_tokens=max_tokens)
+
+
+def _chunk_generic(
+    body: str,
+    *,
     max_tokens: int = DEFAULT_MAX_CHUNK_TOKENS,
 ) -> list[Chunk]:
     lines = body.splitlines(keepends=True)
@@ -219,6 +235,125 @@ def chunk_markdown(
                 Chunk(
                     slug=slug,
                     heading_path=heading_path,
+                    body=piece_body,
+                    order=order,
+                )
+            )
+            order += 1
+
+    return chunks
+
+
+def _chunk_api_spec(
+    body: str,
+    *,
+    doc_id: str | None,
+    max_tokens: int,
+) -> list[Chunk]:
+    lines = body.splitlines(keepends=True)
+    in_code = False
+
+    preamble_lines: list[str] = []
+    endpoint_sections: list[tuple[str, str, list[str]]] = []
+    schemas_lines: list[str] = []
+
+    state = "preamble"
+    h1_title: str | None = None
+
+    for line in lines:
+        in_code_after = _toggle_code_fence(line, in_code)
+        is_fence = in_code_after != in_code
+
+        if state == "schemas":
+            # Schemas section runs from the schemas header to EOF; any later
+            # endpoint or schemas headers fold into this chunk so the document
+            # bytes stay in source order.
+            schemas_lines.append(line)
+            in_code = in_code_after
+            continue
+
+        endpoint_match: re.Match[str] | None = None
+        is_schemas_header = False
+        if not in_code and not is_fence:
+            endpoint_match = ENDPOINT_HEADER_RE.match(line)
+            if endpoint_match is None:
+                h2_match = _H2_RE.match(line)
+                if h2_match is not None:
+                    title = h2_match.group(1).strip()
+                    if title.lower() in _SCHEMA_SECTION_TITLES:
+                        is_schemas_header = True
+
+        if endpoint_match is not None:
+            method = endpoint_match.group(1)
+            path = endpoint_match.group(2)
+            endpoint_sections.append((method, path, [line]))
+            state = "endpoint"
+        elif is_schemas_header:
+            schemas_lines.append(line)
+            state = "schemas"
+        else:
+            if state == "preamble":
+                if h1_title is None and not in_code and not is_fence:
+                    h1_match = _H1_RE.match(line)
+                    if h1_match is not None:
+                        h1_title = h1_match.group(1).strip()
+                preamble_lines.append(line)
+            else:  # state == "endpoint"
+                endpoint_sections[-1][2].append(line)
+
+        in_code = in_code_after
+
+    if not endpoint_sections:
+        prefix = f"doc {doc_id} " if doc_id is not None else ""
+        print(
+            f"warn: {prefix}kind=api-spec but no endpoint headers found, using generic chunker",
+            file=sys.stderr,
+        )
+        return _chunk_generic(body, max_tokens=max_tokens)
+
+    used_slugs: set[str] = set()
+    chunks: list[Chunk] = []
+    order = 0
+
+    preamble_body = "".join(preamble_lines)
+    preamble_heading_path: tuple[str, ...] = (h1_title,) if h1_title is not None else ()
+    for piece_body in _split_section_body(preamble_body, max_tokens):
+        slug = _dedupe_slug(_PREAMBLE_SLUG, used_slugs)
+        chunks.append(
+            Chunk(
+                slug=slug,
+                heading_path=preamble_heading_path,
+                body=piece_body,
+                order=order,
+            )
+        )
+        order += 1
+
+    for method, path, ep_lines in endpoint_sections:
+        section_body = "".join(ep_lines)
+        base_slug = slugify(f"{method} {path}")
+        endpoint_heading_path = ("ENDPOINTS", f"{method} {path}")
+        for piece_body in _split_section_body(section_body, max_tokens):
+            slug = _dedupe_slug(base_slug, used_slugs)
+            chunks.append(
+                Chunk(
+                    slug=slug,
+                    heading_path=endpoint_heading_path,
+                    body=piece_body,
+                    order=order,
+                )
+            )
+            order += 1
+
+    if schemas_lines:
+        schemas_body = "".join(schemas_lines)
+        schemas_heading_path = ("SCHEMAS",)
+        for piece_body in _split_section_body(schemas_body, max_tokens):
+            slug = _dedupe_slug(_SCHEMAS_SLUG, used_slugs)
+            chunks.append(
+                Chunk(
+                    slug=slug,
+                    heading_path=schemas_heading_path,
                     body=piece_body,
                     order=order,
                 )
