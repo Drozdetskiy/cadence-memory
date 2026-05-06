@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import fnmatch
+import json
 import os
+import re
 import shlex
 import shutil
 import sqlite3
 import subprocess
 import sys
+from collections import deque
 from collections.abc import Callable, MutableMapping, Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 import typer
+from ruamel.yaml.error import YAMLError
 
 from cadence_memory import __version__, ephemeral
 from cadence_memory import chat as _chat_module
@@ -21,9 +26,12 @@ from cadence_memory.config import (
     AnnotationsConfig,
     Config,
     ConfigError,
+    ProjectConfig,
     load_annotations_config,
     load_config,
 )
+from cadence_memory.config_writer import ConfigWriter
+from cadence_memory.defaults.exclude import DEFAULT_PROJECT_EXCLUDE
 from cadence_memory.discover.runner import (
     DiscoverFailed,
     DiscoverInputs,
@@ -52,6 +60,13 @@ ephemeral_app = typer.Typer(
     help="Manage ephemeral task notes stored under <store>/ephemeral/.",
 )
 app.add_typer(ephemeral_app, name="ephemeral")
+projects_app = typer.Typer(
+    add_completion=False,
+    help="Manage entries in config.yaml's projects: list.",
+)
+app.add_typer(projects_app, name="projects")
+
+_PROJECT_NAME_RE: Final = re.compile(r"^[a-z0-9_-]+$")
 
 _DEFAULT_FILES: tuple[tuple[str, str], ...] = (
     ("config.yaml", "config.yaml"),
@@ -828,3 +843,255 @@ def ephemeral_clear(
         store.close()
 
     typer.echo(f"cleared: {count} document(s)")
+
+
+def _resolve_store_dir_or_exit(ctx: typer.Context) -> Path:
+    flag = ctx.obj.get("store") if ctx.obj else None
+    try:
+        return resolve_store_dir(flag=flag, env=os.environ, cwd=Path.cwd())
+    except StoreNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _open_config_writer_or_exit(store_dir: Path) -> ConfigWriter:
+    try:
+        return ConfigWriter(store_dir / "config.yaml")
+    except OSError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except YAMLError as exc:
+        typer.echo(f"error: failed to parse config.yaml: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _format_projects_table(projects: list[ProjectConfig]) -> str:
+    columns: tuple[str, ...] = ("name", "path", "excludes")
+    rows: list[tuple[str, ...]] = [columns]
+    for project in projects:
+        rows.append((project.name, str(project.path), str(len(project.exclude))))
+    widths = [max(len(row[col_idx]) for row in rows) for col_idx in range(len(columns))]
+    lines = [
+        "  ".join(value.ljust(widths[col_idx]) for col_idx, value in enumerate(row)).rstrip()
+        for row in rows
+    ]
+    return "\n".join(lines)
+
+
+def _format_projects_json(projects: list[ProjectConfig]) -> str:
+    payload = [
+        {"name": project.name, "path": str(project.path), "excludes": len(project.exclude)}
+        for project in projects
+    ]
+    return json.dumps(payload, indent=2, sort_keys=False, ensure_ascii=False)
+
+
+@projects_app.command("add")
+def projects_add(
+    ctx: typer.Context,
+    name: Annotated[
+        str,
+        typer.Argument(help="Project name. Must match ^[a-z0-9_-]+$."),
+    ],
+    path: Annotated[
+        Path,
+        typer.Argument(help="Filesystem path to the project root."),
+    ],
+    no_default_exclude: Annotated[
+        bool,
+        typer.Option(
+            "--no-default-exclude",
+            help="Write `exclude: []` instead of the default Python exclude globs.",
+        ),
+    ] = False,
+) -> None:
+    """Add a project entry to config.yaml."""
+    if not _PROJECT_NAME_RE.match(name):
+        typer.echo(f"error: invalid project name: {name}", err=True)
+        raise typer.Exit(code=1)
+
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_dir():
+        typer.echo(f"error: path is not a directory: {resolved}", err=True)
+        raise typer.Exit(code=1)
+
+    store_dir = _resolve_store_dir_or_exit(ctx)
+    writer = _open_config_writer_or_exit(store_dir)
+
+    exclude: Sequence[str] | None = () if no_default_exclude else None
+    try:
+        result = writer.add_project(name=name, path=resolved, exclude=exclude)
+    except OSError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not result.added:
+        typer.echo(f"error: project already exists: {name}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"added project: {name} -> {resolved}")
+
+
+@projects_app.command("list")
+def projects_list(
+    ctx: typer.Context,
+    format: Annotated[
+        Literal["json", "table"] | None,
+        typer.Option(
+            "--format",
+            help="Output format. Defaults to table when stdout is a TTY, json otherwise.",
+        ),
+    ] = None,
+) -> None:
+    """List projects registered in config.yaml."""
+    store_dir = _resolve_store_dir_or_exit(ctx)
+    try:
+        cfg = load_config(store_dir / "config.yaml")
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    projects = list(cfg.projects)
+    if not projects:
+        typer.echo("(no projects registered)", err=True)
+        return
+
+    fmt = _resolve_format(format)
+    if fmt == "json":
+        typer.echo(_format_projects_json(projects))
+    else:
+        typer.echo(_format_projects_table(projects))
+
+
+@projects_app.command("remove")
+def projects_remove(
+    ctx: typer.Context,
+    name: Annotated[
+        str,
+        typer.Argument(help="Project name to remove."),
+    ],
+) -> None:
+    """Remove a project entry from config.yaml."""
+    store_dir = _resolve_store_dir_or_exit(ctx)
+    writer = _open_config_writer_or_exit(store_dir)
+
+    try:
+        removed = writer.remove_project(name)
+    except OSError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not removed:
+        typer.echo(f"error: project not found: {name}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"removed project: {name}")
+
+
+def _slugify_project_name(raw: str) -> str:
+    lowered = raw.lower()
+    transformed = re.sub(r"[^a-z0-9_-]", "_", lowered)
+    collapsed = re.sub(r"_+", "_", transformed)
+    stripped = collapsed.strip("_-")
+    return stripped if stripped else "project"
+
+
+def _exclude_basename_patterns() -> tuple[str, ...]:
+    patterns: list[str] = []
+    for raw in DEFAULT_PROJECT_EXCLUDE:
+        parts = [part for part in raw.split("/") if part and part != "**"]
+        if parts:
+            patterns.append(parts[-1])
+    return tuple(patterns)
+
+
+def _is_excluded_basename(basename: str, patterns: Sequence[str]) -> bool:
+    return any(fnmatch.fnmatch(basename, pattern) for pattern in patterns)
+
+
+def _autodetect_projects(root: Path, depth: int) -> list[Path]:
+    excluded = _exclude_basename_patterns()
+    found: list[Path] = []
+    queue: deque[tuple[Path, int]] = deque([(root, 0)])
+    while queue:
+        current, current_depth = queue.popleft()
+        if (current / ".git").exists():
+            found.append(current)
+            continue
+        if current_depth >= depth:
+            continue
+        try:
+            children = sorted(child for child in current.iterdir() if child.is_dir())
+        except OSError:
+            continue
+        for child in children:
+            if _is_excluded_basename(child.name, excluded):
+                continue
+            queue.append((child, current_depth + 1))
+    return found
+
+
+@projects_app.command("autodetect")
+def projects_autodetect(
+    ctx: typer.Context,
+    root: Annotated[
+        Path,
+        typer.Option("--root", help="Root directory to scan for git repos."),
+    ] = Path("."),
+    depth: Annotated[
+        int,
+        typer.Option("--depth", help="Maximum directory depth to scan from --root."),
+    ] = 3,
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Add discovered repos to config.yaml. Without it, only print candidates.",
+        ),
+    ] = False,
+) -> None:
+    """Discover git repos under --root and (optionally) register them as projects."""
+    if depth < 0:
+        typer.echo("error: --depth must be >= 0", err=True)
+        raise typer.Exit(code=1)
+
+    resolved_root = Path(root).expanduser().resolve()
+    if not resolved_root.is_dir():
+        typer.echo(f"error: --root is not a directory: {resolved_root}", err=True)
+        raise typer.Exit(code=1)
+
+    candidates = _autodetect_projects(resolved_root, depth)
+    pairs = [(_slugify_project_name(path.name), path) for path in candidates]
+
+    if not apply:
+        for slug, path in pairs:
+            typer.echo(f"+ {slug} -> {path}")
+        typer.echo(
+            f"autodetect: {len(pairs)} candidate(s); rerun with --apply to write",
+            err=True,
+        )
+        return
+
+    store_dir = _resolve_store_dir_or_exit(ctx)
+    writer = _open_config_writer_or_exit(store_dir)
+
+    added = 0
+    for slug, path in pairs:
+        try:
+            result = writer.add_project(name=slug, path=path, exclude=None)
+        except OSError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        if not result.added:
+            typer.echo(f"warn: project already exists: {slug}", err=True)
+            continue
+        typer.echo(f"added project: {slug} -> {path}")
+        added += 1
+
+    typer.echo(f"autodetect: added {added} of {len(pairs)}", err=True)

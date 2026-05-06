@@ -76,7 +76,7 @@ make check                      # lint + typecheck + test
 
 - Python 3.14+, `mypy --strict`. No `Any`; all Protocol boundaries annotated.
 - **Protocol-based interfaces** for every external dependency (`Store`, `ConfigLoader`, `FrontmatterParser`, `ClaudeRunner`). Tests mock the Protocol, not the real SQLite/files/subprocess.
-- **No `rich`** — manual column/textwrap layout in formatters. Runtime deps stay at `typer`, `PyYAML`, `python-frontmatter`. `sqlite3` is stdlib.
+- **No `rich`** — manual column/textwrap layout in formatters. Runtime deps stay at `typer`, `PyYAML`, `python-frontmatter`, `ruamel.yaml`. `sqlite3` is stdlib.
 - Embedded defaults under `src/cadence_memory/defaults/` are read via `importlib.resources` — never hard-coded paths.
 - Dataclasses: `@dataclass(frozen=True, slots=True)` for configs and DTOs.
 - No global mutable state; everything passed as parameters.
