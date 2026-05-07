@@ -49,9 +49,7 @@ class _FactoryRecorder:
 
         original_rerank = reranker.rerank
 
-        def patched_rerank(
-            query: str, items: Sequence[RerankItem]
-        ) -> list[RerankedItem]:
+        def patched_rerank(query: str, items: Sequence[RerankItem]) -> list[RerankedItem]:
             outer.last_items_count = len(items)
             reranker.response = list(outer.response_builder(list(items)))  # type: ignore[operator]
             return original_rerank(query, items)
@@ -322,8 +320,7 @@ def test_body_excerpt_truncated_to_500_chars(
     )
     (store_dir / "config.yaml").write_text(config_yaml, encoding="utf-8")
     (store_dir / "annotations-config.yaml").write_text(
-        "documents:\n"
-        "  - id: proj:long.md\n    project: proj\n    path: long.md\n    kind: doc\n",
+        "documents:\n  - id: proj:long.md\n    project: proj\n    path: long.md\n    kind: doc\n",
         encoding="utf-8",
     )
     seed = runner.invoke(app, ["--store", str(store_dir), "reindex"])
