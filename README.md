@@ -2,7 +2,12 @@
 
 Cross-project knowledge layer for Claude Code, designed to complement [cadence](https://github.com/Drozdetskiy/cadence). Stores architecture, patterns, and per-task context as markdown with YAML frontmatter, indexed in SQLite (FTS5), and exposed to Claude through two skills that drive a small CLI.
 
-> **Status:** design stabilized in [`docs/design.md`](docs/design.md); implementation in progress task-by-task under `cdc-tasks/`. The CLI surface below describes the target product.
+## Install
+
+```bash
+pip install cadence-memory
+brew install drozdetskiy/cadence/cadence-memory
+```
 
 ## Why
 
@@ -17,21 +22,36 @@ Design choices, in one breath:
 
 Full rationale and tradeoffs in [`docs/design.md`](docs/design.md).
 
-## Target CLI
+## CLI
 
 ```
-cadence-memory init                                 # create config.yaml + annotations-config.yaml + .gitignore + git init
-cadence-memory reindex [--verbose]                  # rebuild index from both configs + on-disk .md files
+cadence-memory init [DIRECTORY]                     # create config.yaml + annotations-config.yaml + .gitignore + index.sqlite + git init
+cadence-memory reindex [--verbose] [--no-enrichment] [--enrichment-model MODEL] [--enrichment-idle-timeout SECS]
+                                                    # rebuild index; runs Claude enrichment per chunk by default
 cadence-memory status                               # dry-run: what would change
 
-cadence-memory discover [--project NAME]... [--apply] [--idle-timeout SECS]
+cadence-memory discover [--project NAME]... [--apply] [--idle-timeout SECS] [--no-cache]
                                                     # spawn Claude on .md files; without --apply writes to
                                                     # annotations-config.yaml.proposed for diff/review
 
-cadence-memory list  [--kind K] [--project P] [--format json|table]
+cadence-memory list  [--kind K] [--project P] [--source-type project|global|ephemeral] [--format json|table]
 cadence-memory query <text> [--kind K] [--project P] [--limit N] [--format json|table]
-cadence-memory get   <id>                           # raw markdown to stdout
-cadence-memory show  <id>                           # metadata + body, formatted
+                            [--no-boost]
+                            [--no-expand] [--variants N] [--expansion-model MODEL]
+                            [--no-rerank] [--rerank-top-k N] [--rerank-model MODEL]
+                                                    # FTS5 search over chunks; identifier boost, Claude expansion, Claude rerank
+cadence-memory get   <id|chunk_id>                  # raw markdown to stdout (chunk if id contains '#<slug>')
+cadence-memory show  <id> [--format json|table]     # metadata + body, formatted
+
+cadence-memory mentions  <chunk_id> [--format json|table]
+                                                    # list the targets a chunk mentions (code paths, endpoints, schemas, doc links)
+cadence-memory backlinks <target> [--kind code|schema|endpoint|doc] [--format json|table]
+                                                    # chunks that mention the given target
+
+cadence-memory projects add <name> <path> [--no-default-exclude]
+cadence-memory projects list [--format json|table]
+cadence-memory projects remove <name>
+cadence-memory projects autodetect [--root DIR] [--depth N] [--apply]
 
 cadence-memory ephemeral add <path> [--id ID] [--kind K] [--title T] [--tags ...] [--symlink]
 cadence-memory ephemeral add --inline - --id ID …   # read note from stdin
@@ -48,7 +68,10 @@ The CLI auto-detects the active store: `--store` flag, then `CADENCE_MEMORY_DIR`
 
 ```bash
 cadence-memory init
-# fill out projects[] in config.yaml by hand
+cadence-memory projects add billing ~/code/billing
+cadence-memory projects add platform ~/code/platform
+# or scan a parent directory:
+cadence-memory projects autodetect --root ~/code --depth 2 --apply
 
 cadence-memory discover                       # → annotations-config.yaml.proposed
 diff annotations-config.yaml annotations-config.yaml.proposed
@@ -62,6 +85,174 @@ For a single project at a time:
 cadence-memory discover --project billing --apply
 cadence-memory reindex
 ```
+
+## Features in depth
+
+### Per-chunk indexing
+
+Documents are split on H1/H2 headings (and on per-endpoint blocks for `kind: api-spec`); each chunk gets its own stable id `<doc_id>#<slug>` and its own row in FTS5. `query` returns chunks, not whole documents, so the result set narrows on the section that actually matches. Use `get` with a chunk id to fetch a single section's body.
+
+```bash
+cadence-memory query "rate limiting"
+# kind     chunk_id                              heading                 summary
+# adr      billing:README.md#retry-policy        Retry policy            Per-tenant token bucket; 429 on overflow.
+# pattern  platform:gateway.md#throttling        Throttling              Sidecar enforces per-route quotas.
+
+cadence-memory get billing:README.md#retry-policy
+# (raw markdown body of just that chunk, suitable for piping)
+```
+
+When to disable / tune: chunks come from headings — if a doc is a single flat block without H1/H2, the whole body becomes one chunk.
+
+### API spec chunker
+
+Set `kind: api-spec` in a document's frontmatter (or via a `discover.kind_rules` entry) and the file is split into a preamble chunk, one chunk per HTTP endpoint heading (`## GET /v1/foo`), and an optional trailing schemas chunk (emitted when the doc has a `## Schemas`, `## Models`, or `## Components` H2). This keeps endpoint-level queries pinned to the right section.
+
+```yaml
+---
+kind: api-spec
+title: Billing API
+---
+# Billing API
+…
+## POST /v1/invoices
+…
+## GET /v1/invoices/{id}
+…
+```
+
+```bash
+cadence-memory query "POST /invoices"
+# kind      chunk_id                              heading                 summary
+# api-spec  billing:api.md#post-v1-invoices       POST /v1/invoices       Creates a draft invoice; 201 on success.
+```
+
+When to disable / tune: leave the default `kind: doc` for prose. Use `api-spec` only for OpenAPI-style markdown with per-endpoint headings.
+
+### Chunk summary preview
+
+Each chunk gets a short body-derived summary that is surfaced in `query` output — both the table view (`summary` column) and the JSON view (`summary` field). Lets you scan a result list without opening every chunk.
+
+```bash
+cadence-memory query "deployment" --format table
+# kind     chunk_id                              heading                 summary
+# adr      platform:adr-014.md#rollout           Rollout                 Blue/green via two ASGs; flip is 1 ALB rule swap.
+# runbook  platform:deploys.md#rollback          Rollback                Tag prev image, redeploy task def, watch /healthz.
+```
+
+When to disable / tune: not configurable — the summary is computed from the body and stored alongside the chunk on reindex. Legacy stores from v0.2.0 pick up the new column automatically the next time the store is opened (e.g. `cadence-memory reindex`); summaries are populated as chunks are reindexed.
+
+### Reindex enrichment
+
+`reindex` runs each new or content-changed chunk through Claude to produce cross-lingual keywords, likely user questions, and alternate phrasings, all folded into the FTS5 row. Results are cached per-chunk keyed on body + model, so a re-run with the same content is free. Requires `claude` on `PATH`.
+
+```bash
+cadence-memory reindex                                          # default: enrichment on, model from config (claude-haiku-4-5)
+cadence-memory reindex --enrichment-model claude-sonnet-4-6     # override with a more capable / slower model
+cadence-memory reindex --no-enrichment                          # skip Claude entirely
+cadence-memory reindex --enrichment-idle-timeout 600            # raise the per-call watchdog
+```
+
+When to disable / tune: use `--no-enrichment` in CI or when iterating on docs without Claude on `PATH`. The default idle timeout is 300s; bump it for slower models with `--enrichment-idle-timeout`. Configurable via the top-level `enrichment` block in `config.yaml`.
+
+### Mentions and backlinks
+
+Reindex extracts mentions from each chunk body — code paths (`src/foo.py`), HTTP endpoints (`GET /v1/users`), CamelCase schema names (`BillingEntity`), and markdown doc links — and stores them indexed both ways. `mentions` lists what a chunk references; `backlinks` finds chunks that reference a given target.
+
+```bash
+cadence-memory mentions billing:README.md#overview
+# kind      target              line_range
+# code      src/billing/api.py
+# endpoint  POST /v1/invoices
+# schema    BillingEntity
+
+cadence-memory backlinks "GET /v1/users" --kind endpoint
+# chunk_id                              kind     title         line_range
+# platform:gateway.md#routing           pattern  Gateway
+```
+
+When to disable / tune: not configurable — mentions are computed during reindex. Use `--kind code|schema|endpoint|doc` on `backlinks` to narrow.
+
+### Identifier-aware ranking boost
+
+On top of the FTS5 ranking score, `query` lifts chunks that mention identifier-shaped tokens from the query — JIRA keys (`PROJ-123`), release tags, acceptance ids, CamelCase schema names, and HTTP endpoints. JSON output exposes per-chunk `score` (raw FTS ranking — BM25 with `--no-expand`, RRF otherwise) and `score_boost` (added contribution; one per matched identifier kind).
+
+```bash
+cadence-memory query "PROJ-123 retry" --format json
+# [
+#   {
+#     "chunk_id": "billing:README.md#retry-policy",
+#     "score": 0.066,
+#     "score_boost": 5.0,
+#     ...
+#   }
+# ]
+```
+
+When to disable / tune: pass `--no-boost` for raw FTS ordering (BM25 with `--no-expand`, RRF otherwise; useful when comparing ranking changes).
+
+### Query expansion (Claude)
+
+Claude rephrases the user's query into alternative phrasings (e.g. translations, synonyms, "how do I…?" forms), FTS5 runs across every variant, and results are merged via reciprocal rank fusion on top of the identifier boost. Results are cached per `(query, model)`. On LLM failure or invalid FTS5 syntax in a variant, the command logs a stderr warning and falls back to the original query.
+
+```bash
+cadence-memory query "billing failures" --variants 3
+# stderr: expanded into 4 variants: ['billing failures', 'invoice errors', ...]
+# (table of merged results — original + up to N alternatives)
+
+cadence-memory query "billing failures" --no-expand              # skip Claude
+cadence-memory query "..." --expansion-model claude-sonnet-4-6   # more capable model
+```
+
+When to disable / tune: `--no-expand` for deterministic results or offline use. Tune `--variants` (or `query.expansion.max_variants` in config) to trade breadth vs latency.
+
+### Reranking (Claude)
+
+After FTS5 + boost + expansion produce a candidate list, Claude reranks the top-K by semantic relevance to the original query. The reranked head is concatenated with the unranked tail and trimmed to `--limit`. JSON output adds `score_rerank` to reranked chunks.
+
+```bash
+cadence-memory query "how to invalidate caches" --rerank-top-k 20 --rerank-model claude-haiku-4-5
+# stderr: reranked top 20 via claude-haiku-4-5
+# (results with the top of the list reordered semantically)
+
+cadence-memory query "..." --no-rerank                           # skip Claude
+```
+
+When to disable / tune: `--no-rerank` when you need raw FTS5 + boost ordering, or to halve query latency. Configurable via `query.rerank` in `config.yaml`.
+
+### Projects management
+
+The `projects` subcommand round-trip-edits `config.yaml` while preserving comments and formatting (via `ruamel.yaml`). `add` registers a single project, `list` shows what's configured, `remove` deletes an entry, and `autodetect` walks a directory looking for git repos.
+
+```bash
+cadence-memory projects add billing ~/code/billing
+cadence-memory projects list
+# name      path                    excludes
+# billing   /Users/me/code/billing  19
+
+cadence-memory projects autodetect --root ~/code --depth 2
+# + billing -> /Users/me/code/billing
+# + platform -> /Users/me/code/platform
+# stderr: autodetect: 2 candidate(s); rerun with --apply to write
+cadence-memory projects autodetect --root ~/code --depth 2 --apply
+
+cadence-memory projects remove billing
+```
+
+When to disable / tune: pass `--no-default-exclude` on `add` to skip the seeded Python exclude globs (useful for non-Python projects).
+
+## Configuration reference
+
+Two files live in the store directory:
+
+- `config.yaml` — hand-edited project map: `projects[]`, `exclude` globs, `globals` (`include`, `exclude`), `defaults.kind`, `commit_index`, plus the new top-level blocks:
+  - `claude.default_model` — shared Claude model for enrichment / expansion / rerank
+  - `enrichment` (`enabled`, `model`)
+  - `query.expansion` (`enabled`, `model`, `max_variants`)
+  - `query.rerank` (`enabled`, `model`, `top_k`)
+- `annotations-config.yaml` — the per-document annotation list. Generated by `discover` (writes to `annotations-config.yaml.proposed` unless `--apply` is passed) and also hand-editable.
+
+Frontmatter wins over `annotations-config.yaml` for `kind`/`title`; `tags`/`related` are merged. Full reference and rationale in [`docs/design.md`](docs/design.md).
 
 ## Document IDs
 
@@ -77,7 +268,7 @@ Use full IDs in `related`. Aliases are deferred (design §13).
 ## Requirements
 
 - Python **3.14+**
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on `PATH` (only needed for `discover` / `chat`)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on `PATH` — required for `discover` / `chat` and for the default Claude-driven pipelines on `reindex` (enrichment) and `query` (expansion + rerank); disable any of those with `--no-enrichment`, `--no-expand`, `--no-rerank` if Claude is not available
 - A `cadence-memory` directory that is itself a git repository
 
 ## Development
