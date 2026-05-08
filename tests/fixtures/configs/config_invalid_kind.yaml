@@ -1,7 +1,0 @@
-projects:
-  - name: billing
-    path: /tmp/cadence_memory_test/billing
-    discover:
-      kind_rules:
-        - pattern: "README.md"
-          kind: not_a_real_kind
