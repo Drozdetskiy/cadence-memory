@@ -1,5 +1,0 @@
-documents:
-  - id: billing:README.md
-    project: billing
-    path: README.md
-    bogus_key: oops

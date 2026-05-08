@@ -1,67 +1,40 @@
 # cadence-memory
 
-Knowledge-base CLI that complements [cadence](https://github.com/Drozdetskiy/cadence). Stores cross-project architecture, patterns, and ephemeral task context as markdown with YAML frontmatter, indexed in SQLite (FTS5). Exposed to Claude Code via two skills (read-only `cadence-memory`, write-side `cadence-memory-discover`) that call the CLI through bash.
+LLM-maintained knowledge base for Claude Code. A worker walks new commits in tracked source repos and asks Claude to keep a single master-wiki repo current. Search via `qmd` MCP. See [`docs/design2.md`](docs/design2.md) for the design and [`docs/features.md`](docs/features.md) for the implementation order.
 
 ## Status
 
-Implementation in progress. The full design is stabilized in [`docs/design.md`](docs/design.md); treat it as the source of truth for behavior. Atomic implementation tasks live under `cdc-tasks/`, one `init` file per task, executed in order via cadence.
+The v1 codebase has been wiped (task `0032-fresh-start`). v2 implementation has not started yet — `src/` and `tests/` are absent until task `0001-package-skeleton` lands. Everything below this section applies to v2 (when it exists) and to the v1-style branch/commit/release conventions which carry over unchanged.
 
-## Target package structure
+When working on v2 tasks, **read `docs/design2.md` end-to-end before drafting any cadence init file.** Cite the relevant section in `## Goal` (e.g. "implements design2 §7"). The design is authoritative; if a detail is unclear, raise it with the user before writing the init.
 
-This is the layout the implementation tasks build out (see design §16.3). Modules created by tasks 0003-0017 land here; until then the corresponding paths are empty stubs.
+## Implementation tasks
 
-```
-src/cadence_memory/
-  cli.py                          - Typer entrypoint; init / reindex / status / list / query / get / show / ephemeral / chat / discover
-  config.py                       - Config + AnnotationsConfig dataclasses, YAML loading, validation, ~ expansion
-  store_locator.py                - resolve_store_dir(): --store flag → CADENCE_MEMORY_DIR env → walk-up
-  ephemeral.py                    - copy/symlink/inline ephemeral docs, source_type='ephemeral'
-  documents/
-    ids.py                        - <project>:<path> | :<path> | eph:<id> build/parse/validate
-    hashes.py                     - SHA256 content_hash / frontmatter_hash / annotation_hash (canonical JSON)
-    parser.py                     - python-frontmatter wrapper → ParsedDocument(frontmatter, frontmatter_text, body, h1_title)
-    annotations.py                - merge annotations-config + frontmatter per design §6 (frontmatter wins for kind/title; tags/related set-union)
-  store/
-    schema.py                     - SQL DDL + init_schema(); WAL + foreign_keys ON
-    interface.py                  - Store Protocol + StoredDocument dataclass
-    sqlite_store.py               - SqliteStore: upsert/delete/get/list/query (FTS5 MATCH)/all_ids
-  reindex/
-    engine.py                     - reindex(): three-hash detection, INSERT/UPDATE/DELETE with metadata-only short-circuit
-    diff.py                       - dry-run variant for `status`
-  discover/
-    scanner.py                    - scan_project / scan_globals: .md walk with exclude globs (.gitignore not consulted)
-    runner.py                     - run_discover() + DiscoverInputs/DiscoverTarget; renders prompt, validates Claude output via load_annotations_config
-  executor/
-    events.py                     - Typed Claude stream-json events + parse_event() (verbatim copy from cadence; keep in sync upstream)
-    process_group.py              - ProcessGroupCleanup: SIGTERM/SIGKILL process group cleanup (verbatim copy from cadence)
-    claude_executor.py            - StreamingClaudeRunner: subprocess + stream-json parsing + idle watchdog + filter_env (trimmed cadence executor; no signals, no error/limit patterns)
-  formatters/
-    json_format.py                - --format json
-    table_format.py               - --format table (no rich dependency; manual columns + textwrap)
-  defaults/
-    config.yaml                   - template for `init`
-    annotations-config.yaml       - empty `documents: []` template for `init`
-    gitignore                     - written to .gitignore by `init`
-    prompts/
-      discover.txt                - embedded discover prompt (string.Template; placeholders: store_dir, output_path, projects_block)
-    skills/
-      cadence-memory.md           - read-only query skill (used by `chat`)
-      cadence-memory-discover.md  - write-side discover skill (used by `discover`)
-```
+Work is sliced into atomic tasks under `cdc-tasks/` — one `init` file per task, executed in order via cadence (`cadence --plan` → `--task`, or `--run --impl --squash`). Each task ends with `make check` passing. The task list and the base init template live in [`docs/features.md`](docs/features.md). Numbering restarts from `0001` for v2 (the v1 sequence ended at `0032-fresh-start`).
 
-## Two configs (design §5)
+## Coding conventions
 
-- `config.yaml` — project map: `projects[].path`, `exclude` globs, optional `discover.kind_rules`, `globals`, `defaults.kind`, `commit_index`. Hand-edited only.
-- `annotations-config.yaml` — list of documents and their annotations. Generated by `discover`, also hand-editable. Single source of truth for "what gets indexed" — a file not in this list is not indexed even if it physically exists in a project.
-- `annotations-config.yaml.proposed` — `discover` writes here unless `--apply` is passed. Gitignored. Reindex never reads it.
+- Python 3.14+, `mypy --strict`. No `Any`; all Protocol boundaries annotated.
+- **Protocol-based interfaces** for every external dependency (`ClaudeRunner`, `GitClient`, `WikiStore`, etc.). Tests mock the Protocol, not the concrete impl.
+- **No `rich`** — manual column/textwrap layout in any formatter code.
+- Embedded defaults under `src/cadence_memory/defaults/` are read via `importlib.resources` — never hard-coded paths.
+- Dataclasses: `@dataclass(frozen=True, slots=True)` for configs and DTOs.
+- No global mutable state; everything passed as parameters.
+- Every Claude prompt template lives under `src/cadence_memory/defaults/prompts/` and is loaded via `importlib.resources`. No inline f-string prompts in business logic.
+- Frontmatter on wiki pages is mechanically validated. Bad frontmatter is a hard error, not a warning.
 
-Annotation priority on conflict: **frontmatter wins** for `kind`/`title`; **merge** for `tags`/`related` (design §6).
+## Testing patterns
 
-## Key commands
+- Mock the `ClaudeRunner` Protocol everywhere — **never invoke a real `claude` subprocess in CI**. The streaming executor's tests inject a fake `subprocess.Popen`.
+- For git operations: use `tmp_path` + `subprocess.run(["git", "init"], ...)`; do not hit network. Wrap `git` calls behind a `GitClient` Protocol so unit tests can mock without touching disk.
+- `tmp_path` for everything filesystem-related: configs, wiki fixtures, ingest fixtures.
+- Typer `CliRunner` for CLI command tests.
 
-Run tools directly from the project venv (`source venv/bin/activate`). Do NOT use `pdm run`.
+## Build & run
 
 For package operations (build, install, publish, dependency management) always use `pdm` — `pdm build`, `pdm add`, `pdm install`, `pdm publish`. Do NOT use raw `pip install`, `python -m build`, or other pip-based workflows; the project is configured around PDM (`pdm.lock`, `pdm-backend`).
+
+Run tools directly from the project venv (`source venv/bin/activate`). Do NOT use `pdm run`.
 
 ```bash
 pytest tests/ -v                # run tests
@@ -72,27 +45,7 @@ cadence-memory --version        # verify CLI
 make check                      # lint + typecheck + test
 ```
 
-## Coding conventions
-
-- Python 3.14+, `mypy --strict`. No `Any`; all Protocol boundaries annotated.
-- **Protocol-based interfaces** for every external dependency (`Store`, `ConfigLoader`, `FrontmatterParser`, `ClaudeRunner`). Tests mock the Protocol, not the real SQLite/files/subprocess.
-- **No `rich`** — manual column/textwrap layout in formatters. Runtime deps stay at `typer`, `PyYAML`, `python-frontmatter`, `ruamel.yaml`. `sqlite3` is stdlib.
-- Embedded defaults under `src/cadence_memory/defaults/` are read via `importlib.resources` — never hard-coded paths.
-- Dataclasses: `@dataclass(frozen=True, slots=True)` for configs and DTOs.
-- No global mutable state; everything passed as parameters.
-- `.gitignore` of project repos is **not** consulted by `discover`/`reindex` — only explicit globs in `config.yaml`.
-
-## Testing patterns
-
-- Mock `Store` Protocol for engine/CLI tests; use a real `SqliteStore` against `tmp_path` only when the test exercises SQL behavior.
-- Mock `ClaudeRunner` Protocol everywhere — **never invoke a real `claude` subprocess in CI**. The streaming executor's tests inject a fake `subprocess.Popen` via `_launch_process(...)`.
-- `tmp_path` for everything filesystem-related: configs, stores, `.md` fixtures, ephemeral copies.
-- Typer `CliRunner` for CLI command tests.
-- For discover-CLI tests, also fake `git status --porcelain` (small injected callable) — no real git invocations.
-
-## Implementation tasks
-
-Work is sliced into atomic tasks under `cdc-tasks/` — one `init` file per task, executed in order. Each task ends with `make check` passing and is meant to fit in a single cadence run (`cadence --plan` → `--task`, or `--run --impl --squash`). High-level rationale lives in design §15.
+These commands will fail until `0001-package-skeleton` reintroduces `src/`, `tests/`, and the project entry point.
 
 ## Branch and commit flow
 
