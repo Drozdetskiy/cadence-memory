@@ -1,0 +1,32 @@
+model: claude-sonnet-4-6
+budget_usd: 0.50
+idle_timeout_s: 300
+
+worker:
+  poll_interval_s: 3600
+  noise_subject_patterns:
+    - "^chore\\(deps\\):"
+    - "^style:"
+    - "^Bump "
+    - "^Apply formatter"
+  skip_subject_patterns:
+    - "^Merge branch "
+  max_commits_per_run: 50
+
+repos:
+  - name: project-a
+    url: git@github.com:org/project-a.git
+    branch: main
+    start_commit: abc1234
+    model: claude-opus-4-7
+    budget_usd: 1.00
+    exclude:
+      - "**/*.lock"
+      - "node_modules/**"
+      - "vendor/**"
+
+  - name: project-b
+    url: https://github.com/org/project-b
+    branch: develop
+
+raw_auto_ingest: false
