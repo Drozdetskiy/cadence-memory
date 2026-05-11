@@ -1,1 +1,8 @@
-"""Wiki repo locator and init scaffolding (populated by tasks 1003/1005)."""
+"""Wiki repo locator and re-exports."""
+
+from cadence_memory.wiki.locator import WikiNotFoundError, resolve_wiki_dir
+
+__all__ = [
+    "WikiNotFoundError",
+    "resolve_wiki_dir",
+]
