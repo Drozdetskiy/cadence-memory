@@ -1,0 +1,4 @@
+garbage: true
+repos:
+  - name: project-a
+    url: git@github.com:org/a.git
