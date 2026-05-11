@@ -2,7 +2,7 @@
 
 Companion to `docs/design2.md`. This file lists v2 features in the order they should be implemented as cadence tasks, and gives the **base prompt template** for the `cdc-tasks/<NNNN>-<slug>/init` files.
 
-The numbering restarts from `0001` on a clean `src/` (the user wipes the v1 codebase in a single commit; v2 starts empty). Each task is sized to fit one cadence run (`cadence --plan` → `--task`, or `--run --impl --squash`) and ends with `make check` passing.
+The numbering restarts from `1001` on a clean `src/` (the user wipes the v1 codebase in a single commit; v2 starts empty). Each task is sized to fit one cadence run (`cadence --plan` → `--task`, or `--run --impl --squash`) and ends with `make check` passing.
 
 ---
 
@@ -90,7 +90,7 @@ Write tests that exercise the actual behavior, not just type-correctness.
 ## Out of scope
 
 - <Things adjacent reviewers might expect to land here but that belong to a
-  later task. Cite the task number, e.g. "Lint command — task 0014.">
+  later task. Cite the task number, e.g. "Lint command — task 1017.">
 - <Always include this section, even if short. It prevents scope creep.>
 
 ## Depends on
@@ -120,28 +120,28 @@ Each item below is one cadence task. Tasks are listed in dependency order — no
 
 | # | Slug | What | Why this position |
 |---|---|---|---|
-| 0001 | `package-skeleton` | Empty package, Typer entrypoint, `make check`, `pdm` build, GitHub CI workflow. `cadence-memory --version` returns `1.0.0`. | Foundation. Everything else depends on the package being installable and CI being green. |
-| 0002 | `config-schema` | `config.yaml` parser (PyYAML for read, ruamel.yaml for round-trip writes). Frozen dataclasses for `Config`, `RepoConfig`, `WorkerConfig`. Validation rules from design2 §5. | Every other module reads config; pin its shape early. |
-| 0003 | `wiki-locator` | `resolve_wiki_dir()`: `--wiki` flag → `CADENCE_MEMORY_WIKI` env → walk-up looking for `config.yaml`. Used by every CLI command. | Cheap, but blocks every CLI subcommand. |
-| 0004 | `frontmatter` | `python-frontmatter` wrapper → `ParsedPage(frontmatter, body, h1)`. Schema for the YAML block (design2 §4). Hard validation: missing required fields → exception with the offending file path. | Wiki pages are mechanically read in many places (lint, ingest context, status). |
-| 0005 | `init-command` | `cadence-memory init [<path>]`: scaffold the master wiki repo (config.yaml, CLAUDE.md, .claude/, raw/, projects/, .gitignore, seed index.md/log.md/gaps.md, `git init`). Idempotent. Embedded defaults via `importlib.resources`. | Needed before any worker test fixtures can be built. |
-| 0006 | `streaming-claude-executor` | Port from v1: `StreamingClaudeRunner` Protocol + impl with `--output-format stream-json`, idle watchdog, process-group cleanup, env filtering. Tests inject a fake `subprocess.Popen`. | Every LLM call goes through this. Reuse v1 code; do not redesign. |
-| 0007 | `claude-runner-protocol` | A higher-level `ClaudeRunner` Protocol over the streaming executor: `run(prompt, *, model, budget_usd, allowed_tools, idle_timeout_s, cwd) -> ClaudeResult`. Used by ingest/bootstrap/lint. Single seam tests mock. | Pulls policy (budget, --bare, --allowedTools) into one place so individual feature tasks don't repeat it. |
-| 0008 | `git-cache` | Clone/fetch helpers under `.cadence-memory/git_cache/<repo>/`. `git clone --filter=blob:none` on first run, `git fetch origin <branch>` on subsequent. Pure subprocess wrappers; no Claude. | Worker depends on this. |
-| 0009 | `git-walker` | `iter_pending_commits(repo, since_sha, branch, *, skip_patterns, noise_patterns) -> Iterator[IngestEvent]`. `IngestEvent` is either a single commit or a noise-batched group. `git log --reverse --topo-order` under the hood. | Pure logic, easy to test against a `tmp_path` git repo. |
-| 0010 | `state-file` | `.cadence-memory/state.json` reader/writer. Atomic write via tmpfile + rename. Schema versioned (design2 §6.2). | Worker uses it on every iteration. |
-| 0011 | `repos-management` | `cadence-memory repos add/list/remove`. ruamel.yaml round-trip; preserves comments. Friendly error on malformed config. | Convenience but a thin slice; ships visible CLI surface early so the user can drive subsequent tasks against real data. |
-| 0012 | `ingest-prompt-and-flow` | `src/cadence_memory/defaults/prompts/ingest.txt` + `ingest_commit(event, wiki, runner)` orchestration: render prompt, call Claude, validate frontmatter on touched files, advance `state.json`, commit master-wiki diff. | The heart of the new design. Everything before this is plumbing. |
-| 0013 | `worker-run` | `cadence-memory worker run [--mode commits] [--only REPO] [--limit N] [--dry-run]`. Wires git-cache + walker + state + ingest. POSIX file lock on `.cadence-memory/worker.lock`. | First end-to-end command. |
-| 0014 | `worker-daemon` | `cadence-memory worker daemon`: long-running poll loop with `worker.poll_interval_s`. SIGTERM-safe between repos, SIGINT-safe between commits. `--once` is sugar for `worker run`. | After `worker run` proves out, the daemon is just a loop. |
-| 0015 | `bootstrap-stages` | `src/cadence_memory/defaults/prompts/bootstrap-{1..5}.txt` (data-model, routes, architecture, gaps, plans). `cadence-memory bootstrap <repo>` (alias for `worker run --mode bootstrap --only <repo>`). Stack detection step at the top of each stage. | Independent of commit-walking; some users will start here. Do after `worker run` so the same plumbing is reused. |
-| 0016 | `manual-ingest` | `cadence-memory ingest <path>`: same prompt scaffolding as commit-ingest, but the source is a file under `raw/notes/` (or anywhere in the wiki tree). Used by the wiki-ingest skill. | Bridge for sources that aren't git commits (articles, meeting notes). |
-| 0017 | `lint-command` | `cadence-memory lint [--apply] [--only REPO]`: orphan pages, broken wikilinks, contradictions, missing pages, gaps refresh. Default writes a `lint/<date>` branch; `--apply` commits to current branch. | Maintenance layer; only useful once a wiki has real content. |
-| 0018 | `query-command` | `cadence-memory query <text>`: `qmd` if available (subprocess), else `rg --type md` over the wiki. `--format json|table`. | Read-side surface. Trivial once everything else is in. |
-| 0019 | `status-command` | `cadence-memory status [--short]`: list of repos, last_sha, last_run_at, pending commits, last_failure. `--short` is the form consumed by the SessionStart hook. | Tiny but unblocks the SessionStart hook task. |
-| 0020 | `claude-skills` | Ship `wiki-researcher.md` and `wiki-ingest.md` under `src/cadence_memory/defaults/skills/`. `init` copies them into `<wiki>/.claude/skills/`. Update `init` to also write `.claude/settings.json` with the SessionStart hook (`cadence-memory status --short && head -60 index.md && tail -15 log.md`) and the `.git/hooks/post-commit` template. | Final integration with Claude Code. Depends on `status --short` and on the wiki layout being stable. |
-| 0021 | `qmd-postcommit-hook` | Post-commit hook in the master wiki repo: `qmd index . --collection master` if qmd is on `$PATH`, else no-op. Installed by `init`. Idempotent on re-run. | Keeps search current after every commit (worker, lint, manual). |
-| 0022 | `release-1.0.0` | Bump `__version__` to `1.0.0`. CHANGELOG entry summarizing the rewrite. PyPI publish + Homebrew formula update (per current CLAUDE.md release flow). End-to-end check from a clean install. | The cut-over commit. |
+| 1001 | `package-skeleton` | Empty package, Typer entrypoint, `make check`, `pdm` build, GitHub CI workflow. `cadence-memory --version` returns `1.0.0`. | Foundation. Everything else depends on the package being installable and CI being green. |
+| 1002 | `config-schema` | `config.yaml` parser (PyYAML for read, ruamel.yaml for round-trip writes). Frozen dataclasses for `Config`, `RepoConfig`, `WorkerConfig`. Validation rules from design2 §5. | Every other module reads config; pin its shape early. |
+| 1003 | `wiki-locator` | `resolve_wiki_dir()`: `--wiki` flag → `CADENCE_MEMORY_WIKI` env → walk-up looking for `config.yaml`. Used by every CLI command. | Cheap, but blocks every CLI subcommand. |
+| 1004 | `frontmatter` | `python-frontmatter` wrapper → `ParsedPage(frontmatter, body, h1)`. Schema for the YAML block (design2 §4). Hard validation: missing required fields → exception with the offending file path. | Wiki pages are mechanically read in many places (lint, ingest context, status). |
+| 1005 | `init-command` | `cadence-memory init [<path>]`: scaffold the master wiki repo (config.yaml, CLAUDE.md, .claude/, raw/, projects/, .gitignore, seed index.md/log.md/gaps.md, `git init`). Idempotent. Embedded defaults via `importlib.resources`. | Needed before any worker test fixtures can be built. |
+| 1006 | `streaming-claude-executor` | Port from v1: `StreamingClaudeRunner` Protocol + impl with `--output-format stream-json`, idle watchdog, process-group cleanup, env filtering. Tests inject a fake `subprocess.Popen`. | Every LLM call goes through this. Reuse v1 code; do not redesign. |
+| 1007 | `claude-runner-protocol` | A higher-level `ClaudeRunner` Protocol over the streaming executor: `run(prompt, *, model, budget_usd, allowed_tools, idle_timeout_s, cwd) -> ClaudeResult`. Used by ingest/bootstrap/lint. Single seam tests mock. | Pulls policy (budget, --bare, --allowedTools) into one place so individual feature tasks don't repeat it. |
+| 1008 | `git-cache` | Clone/fetch helpers under `.cadence-memory/git_cache/<repo>/`. `git clone --filter=blob:none` on first run, `git fetch origin <branch>` on subsequent. Pure subprocess wrappers; no Claude. | Worker depends on this. |
+| 1009 | `git-walker` | `iter_pending_commits(repo, since_sha, branch, *, skip_patterns, noise_patterns) -> Iterator[IngestEvent]`. `IngestEvent` is either a single commit or a noise-batched group. `git log --reverse --topo-order` under the hood. | Pure logic, easy to test against a `tmp_path` git repo. |
+| 1010 | `state-file` | `.cadence-memory/state.json` reader/writer. Atomic write via tmpfile + rename. Schema versioned (design2 §6.2). | Worker uses it on every iteration. |
+| 1011 | `repos-management` | `cadence-memory repos add/list/remove`. ruamel.yaml round-trip; preserves comments. Friendly error on malformed config. | Convenience but a thin slice; ships visible CLI surface early so the user can drive subsequent tasks against real data. |
+| 1012 | `ingest-prompt-and-flow` | `src/cadence_memory/defaults/prompts/ingest.txt` + `ingest_commit(event, wiki, runner)` orchestration: render prompt, call Claude, validate frontmatter on touched files, advance `state.json`, commit master-wiki diff. | The heart of the new design. Everything before this is plumbing. |
+| 1013 | `worker-run` | `cadence-memory worker run [--mode commits] [--only REPO] [--limit N] [--dry-run]`. Wires git-cache + walker + state + ingest. POSIX file lock on `.cadence-memory/worker.lock`. | First end-to-end command. |
+| 1014 | `worker-daemon` | `cadence-memory worker daemon`: long-running poll loop with `worker.poll_interval_s`. SIGTERM-safe between repos, SIGINT-safe between commits. `--once` is sugar for `worker run`. | After `worker run` proves out, the daemon is just a loop. |
+| 1015 | `bootstrap-stages` | `src/cadence_memory/defaults/prompts/bootstrap-{1..5}.txt` (data-model, routes, architecture, gaps, plans). `cadence-memory bootstrap <repo>` (alias for `worker run --mode bootstrap --only <repo>`). Stack detection step at the top of each stage. | Independent of commit-walking; some users will start here. Do after `worker run` so the same plumbing is reused. |
+| 1016 | `manual-ingest` | `cadence-memory ingest <path>`: same prompt scaffolding as commit-ingest, but the source is a file under `raw/notes/` (or anywhere in the wiki tree). Used by the wiki-ingest skill. | Bridge for sources that aren't git commits (articles, meeting notes). |
+| 1017 | `lint-command` | `cadence-memory lint [--apply] [--only REPO]`: orphan pages, broken wikilinks, contradictions, missing pages, gaps refresh. Default writes a `lint/<date>` branch; `--apply` commits to current branch. | Maintenance layer; only useful once a wiki has real content. |
+| 1018 | `query-command` | `cadence-memory query <text>`: `qmd` if available (subprocess), else `rg --type md` over the wiki. `--format json|table`. | Read-side surface. Trivial once everything else is in. |
+| 1019 | `status-command` | `cadence-memory status [--short]`: list of repos, last_sha, last_run_at, pending commits, last_failure. `--short` is the form consumed by the SessionStart hook. | Tiny but unblocks the SessionStart hook task. |
+| 1020 | `claude-skills` | Ship `wiki-researcher.md` and `wiki-ingest.md` under `src/cadence_memory/defaults/skills/`. `init` copies them into `<wiki>/.claude/skills/`. Update `init` to also write `.claude/settings.json` with the SessionStart hook (`cadence-memory status --short && head -60 index.md && tail -15 log.md`) and the `.git/hooks/post-commit` template. | Final integration with Claude Code. Depends on `status --short` and on the wiki layout being stable. |
+| 1021 | `qmd-postcommit-hook` | Post-commit hook in the master wiki repo: `qmd index . --collection master` if qmd is on `$PATH`, else no-op. Installed by `init`. Idempotent on re-run. | Keeps search current after every commit (worker, lint, manual). |
+| 1022 | `release-1.0.0` | Bump `__version__` to `1.0.0`. CHANGELOG entry summarizing the rewrite. PyPI publish + Homebrew formula update (per current CLAUDE.md release flow). End-to-end check from a clean install. | The cut-over commit. |
 
 ### Optional / v2.1 follow-ups (not in the initial pass)
 

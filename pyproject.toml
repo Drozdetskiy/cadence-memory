@@ -5,6 +5,9 @@ description = "LLM-maintained knowledge base for Claude Code (rewrite in progres
 requires-python = ">=3.14"
 dependencies = [
     "typer>=0.9",
+    "PyYAML>=6.0",
+    "python-frontmatter>=1.1",
+    "ruamel.yaml>=0.18",
 ]
 
 [project.scripts]
@@ -25,6 +28,7 @@ dev = [
     "mypy>=1.10",
     "pytest-cov>=5.0",
     "pytest-mock>=3.14",
+    "types-PyYAML",
 ]
 
 [tool.ruff]
@@ -39,6 +43,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 strict = true
 python_version = "3.14"
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["frontmatter", "ruamel.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
