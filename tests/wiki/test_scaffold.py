@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,7 @@ _EXPECTED_FILES: tuple[str, ...] = (
     "gaps.md",
     "raw/.gitkeep",
     "projects/.gitkeep",
+    ".git/hooks/post-commit",
 )
 
 
@@ -42,6 +44,10 @@ def test_fresh_scaffold_creates_full_tree(tmp_path: Path) -> None:
         assert created.is_absolute()
         assert created.is_file()
     assert result.skipped_files == ()
+
+    hook = (tmp_path / ".git" / "hooks" / "post-commit").resolve()
+    assert hook in created_set
+    assert stat.S_IXUSR & hook.stat().st_mode
 
 
 def test_idempotent_second_run_creates_nothing(tmp_path: Path) -> None:
@@ -125,6 +131,35 @@ def test_target_directory_is_created_if_missing(tmp_path: Path) -> None:
     assert (nested / "config.yaml").is_file()
     assert (nested / "index.md").is_file()
     assert result.target == nested.resolve()
+
+
+def test_scaffold_in_subdirectory_of_existing_repo(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    nested = tmp_path / "wiki"
+
+    result = scaffold_wiki(nested)
+
+    assert result.git_initialized is False
+    assert (nested / "config.yaml").is_file()
+    hook_path = (nested / ".git" / "hooks" / "post-commit").resolve()
+    assert not hook_path.exists()
+    assert hook_path in set(result.skipped_files)
+
+
+def test_scaffold_preserves_foreign_post_commit_hook(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    foreign_script = b"#!/bin/bash\necho foreign\n"
+    hook_file = hooks_dir / "post-commit"
+    hook_file.write_bytes(foreign_script)
+
+    result = scaffold_wiki(tmp_path)
+
+    assert hook_file.read_bytes() == foreign_script
+    hook_path = hook_file.resolve()
+    assert hook_path in set(result.skipped_files)
+    assert hook_path not in set(result.created_files)
 
 
 def test_atomic_write_failure_cleans_up_tmp(
