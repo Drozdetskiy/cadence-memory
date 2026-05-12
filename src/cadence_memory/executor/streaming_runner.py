@@ -44,12 +44,10 @@ class StreamingClaudeRunner:
         self,
         *,
         claude_command: str = "claude",
-        idle_timeout_s: float = 300.0,
         env_overrides: dict[str, str] | None = None,
         env_passthrough: tuple[str, ...] = _DEFAULT_ENV_PASSTHROUGH,
     ) -> None:
         self._claude_command = claude_command
-        self._idle_timeout_s = idle_timeout_s
         self._env_overrides = dict(env_overrides) if env_overrides else {}
         self._env_passthrough = tuple(env_passthrough)
 
@@ -62,6 +60,7 @@ class StreamingClaudeRunner:
         allowed_tools: tuple[str, ...] = (),
         budget_usd: float | None = None,
         extra_args: tuple[str, ...] = (),
+        idle_timeout_s: float = 300.0,
     ) -> RunResult:
         argv = self._build_argv(
             model=model,
@@ -110,7 +109,7 @@ class StreamingClaudeRunner:
 
             while True:
                 try:
-                    item = stdout_q.get(timeout=self._idle_timeout_s)
+                    item = stdout_q.get(timeout=idle_timeout_s)
                 except queue.Empty:
                     watchdog_fired = True
                     break
@@ -171,7 +170,6 @@ class StreamingClaudeRunner:
         argv: list[str] = [
             self._claude_command,
             "-p",
-            "--bare",
             "--output-format",
             "stream-json",
             "--input-format",

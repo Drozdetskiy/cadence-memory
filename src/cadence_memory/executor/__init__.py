@@ -11,10 +11,21 @@ from cadence_memory.executor.events import (
     parse_event,
 )
 from cadence_memory.executor.process_group import ProcessGroupCleanup
+from cadence_memory.executor.runner import (
+    ClaudeResult,
+    ClaudeRunner,
+    DefaultClaudeRunner,
+)
 from cadence_memory.executor.streaming_runner import RunResult, StreamingClaudeRunner
+from cadence_memory.executor.tool_sets import WIKI_READONLY, WIKI_READWRITE
 
 __all__ = [
+    "WIKI_READONLY",
+    "WIKI_READWRITE",
     "AssistantTextEvent",
+    "ClaudeResult",
+    "ClaudeRunner",
+    "DefaultClaudeRunner",
     "ErrorEvent",
     "Event",
     "ProcessGroupCleanup",

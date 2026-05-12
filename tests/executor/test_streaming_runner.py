@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import os
@@ -180,10 +181,10 @@ def test_runner_idle_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "getpgid", fake_getpgid)
     monkeypatch.setattr(os, "killpg", fake_killpg)
 
-    runner = _FakeRunner(fake, idle_timeout_s=0.1)
+    runner = _FakeRunner(fake)
 
     start = time.monotonic()
-    result = runner.run(prompt="hi", model="m")
+    result = runner.run(prompt="hi", model="m", idle_timeout_s=0.1)
     elapsed = time.monotonic() - start
 
     assert result.exit_code == 124
@@ -332,3 +333,35 @@ def test_runner_no_real_claude() -> None:
     assert result.exit_code == 0
     assert runner.captured_argv is not None
     assert runner.captured_argv[0] == "this-binary-does-not-exist"
+
+
+def test_runner_no_bare_when_extra_args_empty() -> None:
+    fake = FakePopen(returncode=0)
+    runner = _FakeRunner(fake)
+
+    runner.run(prompt="x", model="m", extra_args=())
+
+    assert runner.captured_argv is not None
+    assert "--bare" not in runner.captured_argv
+
+
+def test_runner_bare_when_passed_via_extra_args() -> None:
+    fake = FakePopen(returncode=0)
+    runner = _FakeRunner(fake)
+
+    runner.run(prompt="x", model="m", extra_args=("--bare",))
+
+    assert runner.captured_argv is not None
+    assert "--bare" in runner.captured_argv
+
+
+def test_runner_default_idle_timeout_used_when_omitted() -> None:
+    sig = inspect.signature(StreamingClaudeRunner.run)
+    assert sig.parameters["idle_timeout_s"].default == 300.0
+
+    fake = FakePopen(returncode=0)
+    runner = _FakeRunner(fake)
+
+    result = runner.run(prompt="x", model="m")
+
+    assert result.exit_code == 0
