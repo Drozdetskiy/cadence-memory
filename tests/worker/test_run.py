@@ -898,6 +898,96 @@ def test_run_dry_run_cache_ensure_error_prints_message_no_state_write(
     assert not (wiki / ".cadence-memory" / "state.json").exists()
 
 
+def test_run_pending_should_stop_between_events_breaks_inner_loop(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    sha_a = "a" * 40
+    sha_b = "b" * 40
+    commits = (_commit(sha_a, "feat: one"), _commit(sha_b, "feat: two"))
+    cache = _FakeGitCache(commits_by_repo={"project-a": commits})
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),))
+
+    calls = {"n": 0}
+
+    def stop_after_first() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    state, summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+        should_stop_between_events=stop_after_first,
+    )
+
+    assert len(runner.calls) == 1
+    assert summary.events_processed == 1
+    repo_state = state.repos["project-a"]
+    assert repo_state.last_sha == sha_a
+    assert repo_state.commits_processed == 1
+
+
+def test_run_pending_should_stop_between_repos_breaks_outer_loop(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    cache = _FakeGitCache(
+        commits_by_repo={
+            "a": (_commit("a" * 40, "feat: a"),),
+            "b": (_commit("b" * 40, "feat: b"),),
+        }
+    )
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg("a"), _repo_cfg("b")))
+
+    _state, summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+        should_stop_between_repos=lambda: True,
+    )
+
+    assert runner.calls == []
+    assert summary.repos == ()
+    assert summary.events_processed == 0
+
+
+def test_run_pending_should_stop_between_repos_stops_after_first(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    cache = _FakeGitCache(
+        commits_by_repo={
+            "a": (_commit("a" * 40, "feat: a"),),
+            "b": (_commit("b" * 40, "feat: b"),),
+        }
+    )
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg("a"), _repo_cfg("b")))
+
+    calls = {"n": 0}
+
+    def stop_after_first() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    _state, summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+        should_stop_between_repos=stop_after_first,
+    )
+
+    assert len(runner.calls) == 1
+    assert summary.repos == ("a",)
+    assert summary.events_processed == 1
+
+
 def test_run_returns_runsummary_dataclass(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     cache = _FakeGitCache()

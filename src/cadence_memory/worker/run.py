@@ -78,6 +78,8 @@ def run_pending(
     dry_run: bool = False,
     clock: Callable[[], datetime] = _utc_now,
     out: TextIO = sys.stdout,
+    should_stop_between_repos: Callable[[], bool] | None = None,
+    should_stop_between_events: Callable[[], bool] | None = None,
 ) -> tuple[WorkerState, RunSummary]:
     state_path = wiki_dir / _STATE_RELPATH
 
@@ -93,6 +95,8 @@ def run_pending(
     per_repo_cap = config.worker.max_commits_per_run
 
     for repo_cfg in config.repos:
+        if should_stop_between_repos is not None and should_stop_between_repos():
+            break
         if only_repo is not None and repo_cfg.name != only_repo:
             continue
 
@@ -173,6 +177,8 @@ def run_pending(
             continue
 
         for event in events:
+            if should_stop_between_events is not None and should_stop_between_events():
+                break
             outcome = ingest_event(
                 event=event,
                 repo_cfg=repo_cfg,
