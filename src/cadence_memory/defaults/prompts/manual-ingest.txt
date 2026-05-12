@@ -1,0 +1,32 @@
+You are maintaining a master wiki of cross-source knowledge.
+
+Wiki root: $wiki_root
+Source file: $source_path
+Source kind: $source_kind     (article | meeting | spec | other)
+
+# Source content
+$source_content
+
+# Current wiki index (head)
+$index_head
+
+# Recent wiki log (tail)
+$log_tail
+
+## Your task
+Integrate this source into the wiki.
+
+Rules:
+- Edit only files inside $wiki_root.
+- Do NOT touch $wiki_root/raw/.
+- Where the source naturally maps to an existing project, place new pages
+  under projects/<repo>/. Otherwise put them under the cross-project root
+  (patterns.md, learnings.md, decisions.md, glossary.md).
+- Every page you create or modify must include or preserve YAML frontmatter
+  with: title, type, source, project, created, updated, tags, confidence.
+- Use [[wikilinks]] for cross-references.
+- If the source contradicts an existing page, append an entry to gaps.md;
+  do not silently rewrite history.
+- Append ONE entry to log.md with prefix `## [<today>] ingest-manual | $source_path — <short summary>`.
+- After editing, do not summarize back to me. Return a single short final
+  message confirming the changes.

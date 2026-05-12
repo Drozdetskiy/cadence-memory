@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -6,7 +7,12 @@ import typer
 from cadence_memory import __version__
 from cadence_memory.cli_commands.repos import repos_app
 from cadence_memory.cli_commands.worker import cmd_run, worker_app
-from cadence_memory.wiki import scaffold_wiki
+from cadence_memory.config.errors import ConfigError
+from cadence_memory.config.loader import load_config
+from cadence_memory.executor.runner import DefaultClaudeRunner
+from cadence_memory.wiki import WikiNotFoundError, scaffold_wiki
+from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
+from cadence_memory.worker.manual import ingest_file
 
 app = typer.Typer(
     name="cadence-memory",
@@ -96,6 +102,58 @@ def cmd_bootstrap(
         wiki=wiki,
         strict=strict,
     )
+
+
+@app.command("ingest")
+def cmd_ingest(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the source file to ingest (typically under raw/notes/).",
+        ),
+    ],
+    wiki: Annotated[
+        Path | None,
+        typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
+    ] = None,
+) -> None:
+    """Ingest a single non-commit source (article, meeting notes, spec) into the master wiki."""
+    try:
+        wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
+    except WikiNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not source.is_absolute():
+        source = (wiki_dir / source).resolve()
+
+    if not source.is_file():
+        typer.echo(f"error: source file not found: {source}", err=True)
+        raise typer.Exit(code=2)
+
+    if not source.is_relative_to(wiki_dir):
+        typer.echo(f"warning: source is outside wiki: {source}", err=True)
+
+    try:
+        cfg = load_config(wiki_dir / CONFIG_FILENAME)
+    except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    outcome = ingest_file(
+        source_path=source,
+        config=cfg,
+        wiki_dir=wiki_dir,
+        runner=DefaultClaudeRunner(),
+    )
+
+    if not outcome.success:
+        typer.echo(f"failed: {outcome.error or 'claude run failed'}", err=True)
+        raise typer.Exit(code=1)
+
+    cost = f"${outcome.cost_usd:.2f}" if outcome.cost_usd is not None else "(n/a)"
+    sha_display = outcome.wiki_commit_sha if outcome.wiki_commit_sha is not None else "no changes"
+    typer.echo(f"ok: {sha_display} ({len(outcome.pages_touched)} pages, {cost})")
 
 
 if __name__ == "__main__":
