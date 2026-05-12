@@ -1,0 +1,37 @@
+You are auditing a master wiki at $wiki_root.
+
+Today: $today
+
+# index.md (head)
+$pages_index_excerpt
+
+# log.md (tail)
+$recent_log_tail
+$scope_hint
+## Your task
+Walk the wiki and:
+  1. Find orphan pages (no inbound [[wikilinks]] from index.md or any other page).
+  2. Find broken [[wikilinks]] (pointing to pages that don't exist).
+  3. Flag contradictions between pages — same concept, conflicting claims.
+  4. Find concepts mentioned ≥3 times across pages but without their own page.
+  5. Refresh gaps.md with the union of any open questions surfaced.
+
+For each finding, prefer to FIX rather than just note:
+  - Orphan page → add a wikilink from a relevant existing page, or remove
+    the orphan if it's stale (note its removal in log.md).
+  - Broken wikilink → either fix the target or remove the wikilink.
+  - Contradiction → append an entry to gaps.md describing both sides; do
+    NOT rewrite either page silently.
+  - Missing page for popular concept → create the page (frontmatter
+    mandatory) and link it from the places that mention the concept.
+
+Every page you create or modify must include or preserve YAML frontmatter
+with: title, type, source, project, created, updated, tags, confidence.
+
+Append ONE summary entry to log.md:
+  `## [$today] lint | <N findings, M fixed, K added to gaps>`.
+
+Touch only files inside $wiki_root. Do NOT touch $wiki_root/raw/.
+
+After editing, do not summarize back to me. Return a single short final
+message confirming the changes.

@@ -12,6 +12,7 @@ from cadence_memory.config.loader import load_config
 from cadence_memory.executor.runner import DefaultClaudeRunner
 from cadence_memory.wiki import WikiNotFoundError, scaffold_wiki
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
+from cadence_memory.worker.lint import run_lint
 from cadence_memory.worker.manual import ingest_file
 
 app = typer.Typer(
@@ -154,6 +155,72 @@ def cmd_ingest(
     cost = f"${outcome.cost_usd:.2f}" if outcome.cost_usd is not None else "(n/a)"
     sha_display = outcome.wiki_commit_sha if outcome.wiki_commit_sha is not None else "no changes"
     typer.echo(f"ok: {sha_display} ({len(outcome.pages_touched)} pages, {cost})")
+
+
+@app.command("lint")
+def cmd_lint(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Commit on the current branch instead of creating lint/<YYYY-MM-DD>.",
+        ),
+    ] = False,
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only",
+            help="Scope the audit to a single repo (projects/<name>/).",
+        ),
+    ] = None,
+    wiki: Annotated[
+        Path | None,
+        typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
+    ] = None,
+) -> None:
+    """Audit the master wiki for orphans, broken links, contradictions, and missing pages."""
+    try:
+        wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
+    except WikiNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        cfg = load_config(wiki_dir / CONFIG_FILENAME)
+    except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    outcome = run_lint(
+        wiki_dir=wiki_dir,
+        config=cfg,
+        runner=DefaultClaudeRunner(),
+        apply=apply,
+        only_repo=only,
+    )
+
+    switch_back: str | None = None
+    if (
+        not apply
+        and outcome.previous_branch is not None
+        and outcome.previous_branch != outcome.branch_used
+    ):
+        switch_back = f"switch back with `git checkout {outcome.previous_branch}`"
+
+    if not outcome.success:
+        typer.echo(f"failed: {outcome.error or 'claude run failed'}", err=True)
+        if switch_back is not None:
+            typer.echo(switch_back)
+        raise typer.Exit(code=1)
+
+    cost = f"${outcome.cost_usd:.2f}" if outcome.cost_usd is not None else "(n/a)"
+    sha_display = outcome.wiki_commit_sha if outcome.wiki_commit_sha is not None else "no changes"
+    typer.echo(
+        f"ok: {sha_display} ({len(outcome.pages_touched)} pages, {cost}) "
+        f"[branch={outcome.branch_used}]"
+    )
+    if switch_back is not None:
+        typer.echo(switch_back)
 
 
 if __name__ == "__main__":
