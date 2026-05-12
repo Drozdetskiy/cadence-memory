@@ -38,6 +38,10 @@ class RunResult:
     duration_ms: int | None
     error: str | None
 
+    @property
+    def success(self) -> bool:
+        return self.exit_code == 0
+
 
 class StreamingClaudeRunner:
     def __init__(
