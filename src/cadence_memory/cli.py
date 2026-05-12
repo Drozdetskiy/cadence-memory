@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Annotated
@@ -10,6 +11,15 @@ from cadence_memory.cli_commands.worker import cmd_run, worker_app
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
 from cadence_memory.executor.runner import DefaultClaudeRunner
+from cadence_memory.search import (
+    Hit,
+    NoBackendAvailableError,
+    QmdBackend,
+    RipgrepBackend,
+    SearchBackend,
+    SearchError,
+    pick_backend,
+)
 from cadence_memory.wiki import WikiNotFoundError, scaffold_wiki
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
 from cadence_memory.worker.lint import run_lint
@@ -221,6 +231,140 @@ def cmd_lint(
     )
     if switch_back is not None:
         typer.echo(switch_back)
+
+
+_SNIPPET_TABLE_MAX = 80
+_VALID_FORMATS = ("table", "json")
+_VALID_BACKENDS = ("qmd", "ripgrep", "auto")
+
+
+def _select_backend(name: str | None) -> SearchBackend:
+    if name in (None, "auto"):
+        return pick_backend()
+    if name == "qmd":
+        if not QmdBackend.available():
+            typer.echo(
+                "error: qmd not on $PATH — install via 'brew install qmd' or use --backend ripgrep",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        return QmdBackend()
+    if name == "ripgrep":
+        if not RipgrepBackend.available():
+            typer.echo(
+                "error: ripgrep not on $PATH — install it or use --backend qmd",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        return RipgrepBackend()
+    raise AssertionError(f"unreachable backend name: {name!r}")
+
+
+def _render_table(hits: tuple[Hit, ...], wiki_dir: Path) -> str:
+    if not hits:
+        return "no matches"
+    headers = ("SCORE", "PATH", "SNIPPET")
+    rows: list[tuple[str, str, str]] = []
+    for hit in hits:
+        score_cell = f"{hit.score:.2f}" if hit.score is not None else "—"
+        try:
+            path_cell = str(hit.path.relative_to(wiki_dir))
+        except ValueError:
+            path_cell = str(hit.path)
+        snippet = hit.snippet.replace("\n", " ").replace("\t", " ")
+        if len(snippet) > _SNIPPET_TABLE_MAX:
+            snippet = snippet[:_SNIPPET_TABLE_MAX] + "…"
+        rows.append((score_cell, path_cell, snippet))
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, value in enumerate(row):
+            if len(value) > widths[i]:
+                widths[i] = len(value)
+
+    def _render(row: tuple[str, ...]) -> str:
+        return "  ".join(value.ljust(widths[i]) for i, value in enumerate(row)).rstrip()
+
+    lines = [_render(headers)]
+    for row in rows:
+        lines.append(_render(row))
+    return "\n".join(lines)
+
+
+def _render_json(hits: tuple[Hit, ...]) -> str:
+    return json.dumps(
+        [
+            {
+                "path": str(h.path),
+                "score": h.score,
+                "snippet": h.snippet,
+                "backend": h.backend,
+            }
+            for h in hits
+        ],
+        indent=2,
+    )
+
+
+@app.command("query")
+def cmd_query(
+    text: Annotated[
+        str,
+        typer.Argument(help="Search text passed to the backend (qmd or ripgrep)."),
+    ],
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Maximum number of hits to return."),
+    ] = 20,
+    format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", help="Force a backend: qmd, ripgrep, or auto."),
+    ] = None,
+    wiki: Annotated[
+        Path | None,
+        typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
+    ] = None,
+) -> None:
+    """Search the master wiki via qmd (preferred) or ripgrep (fallback)."""
+    if format not in _VALID_FORMATS:
+        typer.echo(
+            f"error: --format must be one of {', '.join(_VALID_FORMATS)} (got {format!r})",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if backend is not None and backend not in _VALID_BACKENDS:
+        typer.echo(
+            f"error: --backend must be one of {', '.join(_VALID_BACKENDS)} (got {backend!r})",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
+    except WikiNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        chosen = _select_backend(backend)
+    except NoBackendAvailableError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    try:
+        hits = chosen.search(query=text, wiki_dir=wiki_dir, limit=limit)
+    except SearchError as exc:
+        typer.echo(f"search failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if format == "json":
+        typer.echo(_render_json(hits))
+    else:
+        typer.echo(_render_table(hits, wiki_dir))
 
 
 if __name__ == "__main__":
