@@ -1,7 +1,7 @@
 [project]
 name = "cadence-memory"
 dynamic = ["version"]
-description = "LLM-maintained knowledge base for Claude Code (rewrite in progress — see docs/design2.md)"
+description = "LLM-maintained knowledge base for Claude Code"
 requires-python = ">=3.14"
 dependencies = [
     "typer>=0.9",

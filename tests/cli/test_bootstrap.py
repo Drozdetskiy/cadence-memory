@@ -16,6 +16,7 @@ from cadence_memory.config.writer import add_repo
 from cadence_memory.wiki import scaffold_wiki
 from cadence_memory.worker.bootstrap import BootstrapOutcome
 from cadence_memory.worker.state import load_state
+from tests._helpers import strip_ansi
 
 _HEAD_SHA = "a" * 40
 
@@ -240,11 +241,11 @@ def test_cli_bootstrap_help_lists_strict() -> None:
 
     worker_help = runner.invoke(app, ["worker", "run", "--help"])
     assert worker_help.exit_code == 0, worker_help.stdout
-    assert "--strict" in worker_help.stdout
+    assert "--strict" in strip_ansi(worker_help.stdout)
 
     boot_help = runner.invoke(app, ["bootstrap", "--help"])
     assert boot_help.exit_code == 0, boot_help.stdout
-    assert "--strict" in boot_help.stdout
+    assert "--strict" in strip_ansi(boot_help.stdout)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock-based lock test")

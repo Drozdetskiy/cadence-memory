@@ -25,6 +25,7 @@ class InstallOutcome(Enum):
     ALREADY_PRESENT = "already_present"
     FOREIGN_PRESENT = "foreign_present"
 
+
 _FILE_MAP: tuple[tuple[str, str], ...] = (
     ("config.yaml", "config.yaml"),
     ("CLAUDE.md", "CLAUDE.md"),

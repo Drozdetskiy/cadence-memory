@@ -15,6 +15,7 @@ from cadence_memory.wiki import scaffold_wiki
 from cadence_memory.worker.daemon import DaemonSignals
 from cadence_memory.worker.run import RunSummary
 from cadence_memory.worker.state import WorkerState
+from tests._helpers import strip_ansi
 
 
 def _scaffold(tmp_path: Path) -> Path:
@@ -40,8 +41,9 @@ def test_cli_daemon_help_shows_flags() -> None:
     result = runner.invoke(app, ["worker", "daemon", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "--once" in result.stdout
-    assert "--wiki" in result.stdout
+    plain = strip_ansi(result.stdout)
+    assert "--once" in plain
+    assert "--wiki" in plain
 
 
 def test_cli_once_delegates_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

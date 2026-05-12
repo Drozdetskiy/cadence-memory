@@ -29,9 +29,7 @@ from cadence_memory.worker.manual import ingest_file
 
 app = typer.Typer(
     name="cadence-memory",
-    help=(
-        "LLM-maintained knowledge base for Claude Code (rewrite in progress — see docs/design2.md)."
-    ),
+    help="LLM-maintained knowledge base for Claude Code.",
     no_args_is_help=False,
 )
 app.add_typer(hooks_app)
