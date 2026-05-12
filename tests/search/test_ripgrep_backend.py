@@ -168,5 +168,3 @@ def test_ripgrep_backend_available_uses_shutil_which(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(backend_mod.shutil, "which", lambda _name: None)
     assert RipgrepBackend.available() is False
-
-
