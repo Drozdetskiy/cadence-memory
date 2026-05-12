@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 — 2026-05-12
+## v0.4.0 — 2026-05-12
 
 Full rewrite. v2 is a Karpathy-style LLM-maintained wiki, not a chunked
 SQLite/FTS5 retrieval pipeline. No migration path from v0.x — `init` a

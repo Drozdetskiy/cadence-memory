@@ -141,7 +141,7 @@ Each item below is one cadence task. Tasks are listed in dependency order — no
 | 1019 | `status-command` | `cadence-memory status [--short]`: list of repos, last_sha, last_run_at, pending commits, last_failure. `--short` is the form consumed by the SessionStart hook. | Tiny but unblocks the SessionStart hook task. |
 | 1020 | `claude-skills` | Ship `wiki-researcher.md` and `wiki-ingest.md` under `src/cadence_memory/defaults/skills/`. `init` copies them into `<wiki>/.claude/skills/`. Update `init` to also write `.claude/settings.json` with the SessionStart hook (`cadence-memory status --short && head -60 index.md && tail -15 log.md`) and the `.git/hooks/post-commit` template. | Final integration with Claude Code. Depends on `status --short` and on the wiki layout being stable. |
 | 1021 | `qmd-postcommit-hook` | Post-commit hook in the master wiki repo: `qmd index . --collection master` if qmd is on `$PATH`, else no-op. Installed by `init`. Idempotent on re-run. | Keeps search current after every commit (worker, lint, manual). |
-| 1022 | `release-1.0.0` | Bump `__version__` to `1.0.0`. CHANGELOG entry summarizing the rewrite. PyPI publish + Homebrew formula update (per current CLAUDE.md release flow). End-to-end check from a clean install. | The cut-over commit. |
+| 1022 | `release-1.0.0` | Bump `__version__` to `0.4.0`. CHANGELOG entry summarizing the rewrite. PyPI publish + Homebrew formula update (per current CLAUDE.md release flow). End-to-end check from a clean install. | The cut-over commit. |
 
 ### Optional / v2.1 follow-ups (not in the initial pass)
 
