@@ -22,6 +22,7 @@ ALLOWED_WORKER_KEYS = frozenset(
         "noise_subject_patterns",
         "skip_subject_patterns",
         "max_commits_per_run",
+        "stop_on_failure",
     }
 )
 ALLOWED_REPO_KEYS = frozenset(
@@ -96,11 +97,15 @@ def _parse_worker(value: object, path: Path) -> WorkerConfig:
         "worker.skip_subject_patterns",
         path,
     )
+    stop_on_failure = _require_bool(
+        wdata.get("stop_on_failure", True), "worker.stop_on_failure", path
+    )
     return WorkerConfig(
         poll_interval_s=poll_interval_s,
         noise_subject_patterns=noise,
         skip_subject_patterns=skip,
         max_commits_per_run=max_commits_per_run,
+        stop_on_failure=stop_on_failure,
     )
 
 

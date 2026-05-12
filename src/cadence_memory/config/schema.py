@@ -13,6 +13,7 @@ class WorkerConfig:
     noise_subject_patterns: tuple[str, ...] = ()
     skip_subject_patterns: tuple[str, ...] = ()
     max_commits_per_run: int = 50
+    stop_on_failure: bool = True
 
 
 @dataclass(frozen=True, slots=True)

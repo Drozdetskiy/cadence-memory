@@ -5,6 +5,7 @@ import typer
 
 from cadence_memory import __version__
 from cadence_memory.cli_commands.repos import repos_app
+from cadence_memory.cli_commands.worker import worker_app
 from cadence_memory.wiki import scaffold_wiki
 
 app = typer.Typer(
@@ -15,6 +16,7 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 app.add_typer(repos_app)
+app.add_typer(worker_app)
 
 
 def _version_callback(value: bool) -> None:
