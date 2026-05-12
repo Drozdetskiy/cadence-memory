@@ -332,6 +332,27 @@ def test_non_integer_timeout_errors() -> None:
     assert "idle_timeout_s" in exc_info.value.message
 
 
+def test_worker_stop_on_failure_default_true() -> None:
+    cfg = parse_config({"worker": {}}, path=Path("<test>"))
+    assert cfg.worker.stop_on_failure is True
+
+
+def test_worker_stop_on_failure_parses_false() -> None:
+    cfg = parse_config({"worker": {"stop_on_failure": False}}, path=Path("<test>"))
+    assert cfg.worker.stop_on_failure is False
+
+
+def test_worker_stop_on_failure_non_bool_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"worker": {"stop_on_failure": "yes"}}, path=Path("<test>"))
+    assert "worker.stop_on_failure" in exc_info.value.message
+    assert "boolean" in exc_info.value.message
+
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"worker": {"stop_on_failure": 1}}, path=Path("<test>"))
+    assert "worker.stop_on_failure" in exc_info.value.message
+
+
 def test_non_bool_raw_auto_ingest_errors() -> None:
     with pytest.raises(ConfigError) as exc_info:
         parse_config({"raw_auto_ingest": "true"}, path=Path("<test>"))

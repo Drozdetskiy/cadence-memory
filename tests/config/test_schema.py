@@ -57,6 +57,7 @@ def test_workerconfig_fields_present() -> None:
         "noise_subject_patterns",
         "skip_subject_patterns",
         "max_commits_per_run",
+        "stop_on_failure",
     }
 
 
@@ -76,6 +77,7 @@ def test_workerconfig_defaults() -> None:
     assert w.noise_subject_patterns == ()
     assert w.skip_subject_patterns == ()
     assert w.max_commits_per_run == 50
+    assert w.stop_on_failure is True
 
 
 def test_repoconfig_defaults() -> None:
