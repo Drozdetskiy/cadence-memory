@@ -1,0 +1,47 @@
+Before doing anything else, detect the stack by reading manifest files at
+the repo root: package.json, pyproject.toml, requirements.txt, Cargo.toml,
+go.mod, Gemfile, mix.exs, build.gradle, pom.xml, composer.json.
+Report which you found in one short line. Then proceed with the stage-
+specific task below, adapting your reading list to that stack.
+
+Repo: $repo_name at $repo_path
+Wiki root: $wiki_root
+HEAD: $head_sha
+Today: $today
+
+Stage 5 of 5 — plans, todos, and recorded decisions.
+
+$plans_directive
+
+When ingesting:
+  - For each significant plan / todo / ADR file under $repo_path/plans/,
+    $repo_path/todos/, $repo_path/docs/decisions/, or $repo_path/ADR/,
+    generate or update one page under
+    $wiki_root/projects/$repo_name/plans/<slug>.md. Capture: goal, status,
+    owner if recoverable, related [[wikilinks]] to data-model / routes /
+    architecture pages produced earlier.
+  - If a plan or ADR contradicts something documented in stages 1-4, add a
+    bullet to $wiki_root/projects/$repo_name/gaps.md noting the contradiction.
+  - Cross-link from the per-repo index section in $wiki_root/index.md so the
+    new plan pages are discoverable.
+
+Every page you create must carry the v2 frontmatter template:
+
+    ---
+    title: <page title>
+    type: decision | overview
+    source: bootstrap
+    project: $repo_name
+    created: $today
+    updated: $today
+    tags: [plans, ...]
+    confidence: high | medium | low
+    ---
+
+Rules:
+- Edit only files inside $wiki_root.
+- Do NOT touch $wiki_root/raw/.
+- Stay within $wiki_root/projects/$repo_name/ for repo-specific pages;
+  $wiki_root/index.md is the only cross-project file you may edit here.
+
+Return a single short confirmation message; do not summarize the changes.

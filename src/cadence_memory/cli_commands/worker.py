@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -15,10 +16,11 @@ from cadence_memory.executor.runner import DefaultClaudeRunner
 from cadence_memory.git.cache import DefaultGitCache
 from cadence_memory.wiki import WikiNotFoundError
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
+from cadence_memory.worker.bootstrap import run_bootstrap
 from cadence_memory.worker.daemon import DaemonSignals, run_daemon
 from cadence_memory.worker.lock import WorkerBusyError, worker_lock
 from cadence_memory.worker.run import run_pending
-from cadence_memory.worker.state import StateError, load_state
+from cadence_memory.worker.state import StateError, load_state, save_state, update_repo
 
 worker_app = typer.Typer(
     name="worker",
@@ -34,6 +36,10 @@ def _resolve_wiki_dir(wiki: Path | None) -> Path:
 def _fail(message: str, *, code: int = 1) -> NoReturn:
     typer.echo(message, err=True)
     raise typer.Exit(code=code)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 @worker_app.command("run")
@@ -58,11 +64,22 @@ def cmd_run(
         Path | None,
         typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
     ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help=(
+                "Bootstrap mode: leave last_sha unchanged when any stage failed "
+                "(default advances to HEAD even on partial failure)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Walk pending commits and ingest them via Claude."""
     if mode == "bootstrap":
-        _fail("bootstrap mode not yet implemented (task 1015)", code=2)
-    if mode != "commits":
+        if only is None:
+            _fail("error: --mode bootstrap requires --only <repo>", code=2)
+    elif mode != "commits":
         _fail("--mode must be 'commits' or 'bootstrap'", code=2)
 
     try:
@@ -84,6 +101,57 @@ def cmd_run(
     cache = DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")
     runner = DefaultClaudeRunner()
     lock_path = wiki_dir / ".cadence-memory" / "worker.lock"
+
+    if mode == "bootstrap":
+        assert only is not None
+        repo_cfg = next((r for r in config.repos if r.name == only), None)
+        if repo_cfg is None:
+            _fail(f"unknown repo: {only}", code=2)
+
+        try:
+            with worker_lock(lock_path):
+                outcome = run_bootstrap(
+                    repo_cfg=repo_cfg,
+                    config=config,
+                    wiki_dir=wiki_dir,
+                    cache=cache,
+                    runner=runner,
+                )
+        except WorkerBusyError as exc:
+            _fail(str(exc))
+
+        advance = not (strict and outcome.stages_failed)
+        failure_msg = (
+            "; ".join(f"bootstrap-{s}" for s in outcome.stages_failed)
+            if outcome.stages_failed
+            else None
+        )
+        if advance:
+            state = update_repo(
+                state,
+                name=repo_cfg.name,
+                last_sha=outcome.head_sha,
+                last_run_at=_utc_now(),
+                last_failure=failure_msg,
+            )
+        else:
+            state = update_repo(
+                state,
+                name=repo_cfg.name,
+                last_run_at=_utc_now(),
+                last_failure=failure_msg,
+            )
+        save_state(state_path, state)
+
+        typer.echo(
+            f"bootstrap {repo_cfg.name}: "
+            f"stages run {len(outcome.stages_run)}, "
+            f"failed {len(outcome.stages_failed)}, "
+            f"${outcome.cost_usd_total:.2f}"
+        )
+        if outcome.stages_failed:
+            raise typer.Exit(code=1)
+        return
 
     try:
         with worker_lock(lock_path):

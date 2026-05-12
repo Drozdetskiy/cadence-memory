@@ -1,0 +1,5 @@
+Before doing anything else, detect the stack by reading manifest files at
+the repo root: package.json, pyproject.toml, requirements.txt, Cargo.toml,
+go.mod, Gemfile, mix.exs, build.gradle, pom.xml, composer.json.
+Report which you found in one short line. Then proceed with the stage-
+specific task below, adapting your reading list to that stack.
