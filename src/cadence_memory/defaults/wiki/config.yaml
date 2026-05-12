@@ -1,0 +1,46 @@
+# cadence-memory master wiki config (see docs/design2.md §5).
+# This file is the only hand-edited config for the wiki. Edit `repos:` to
+# track source repositories; the rest of the keys have sensible defaults.
+
+# Default Claude model used for every LLM call. Overridable per-repo.
+model: claude-sonnet-4-6
+
+# Default per-call budget in USD. The worker passes --max-budget-usd to Claude.
+budget_usd: 0.50
+
+# Idle watchdog timeout for a single Claude call, in seconds.
+idle_timeout_s: 300
+
+worker:
+  # How often `worker daemon` polls each repo for new commits.
+  poll_interval_s: 3600
+
+  # Commits whose subject matches any of these regexes are batched and fed to
+  # Claude in a single call rather than one-by-one (deps bumps, formatter
+  # passes, lockfile churn, generated code, etc.).
+  noise_subject_patterns:
+    - "^chore\\(deps\\):"
+    - "^style:"
+    - "^Bump "
+    - "^Apply formatter"
+
+  # Commits matching these are skipped entirely.
+  skip_subject_patterns:
+    - "^Merge branch "
+
+  # Maximum number of commits to process in a single `worker run`.
+  max_commits_per_run: 50
+
+# Tracked source repositories. Each entry becomes a `projects/<name>/` subtree.
+# Uncomment and edit the example below to add your first repo.
+repos: []
+#  - name: project-a
+#    url: git@github.com:org/project-a.git
+#    branch: main
+#    # Optional per-repo overrides:
+#    # start_commit: abc1234
+#    # model: claude-opus-4-7
+#    # budget_usd: 1.00
+#    # exclude:
+#    #   - "**/*.lock"
+#    #   - "node_modules/**"

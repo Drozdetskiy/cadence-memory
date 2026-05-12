@@ -81,6 +81,7 @@ dmypy.json
 .pypirc
 
 .claude/
+!src/cadence_memory/defaults/wiki/.claude/
 .cadence/
 .idea/
 

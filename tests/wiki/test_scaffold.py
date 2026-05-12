@@ -1,0 +1,139 @@
+"""Tests for `scaffold_wiki` (design2 §4, §11)."""
+
+from __future__ import annotations
+
+import subprocess
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from cadence_memory.documents.frontmatter import parse_page
+from cadence_memory.wiki import ScaffoldResult, scaffold_wiki
+from cadence_memory.wiki import init as init_module
+
+_EXPECTED_FILES: tuple[str, ...] = (
+    "config.yaml",
+    "CLAUDE.md",
+    ".claude/settings.json",
+    ".gitignore",
+    "index.md",
+    "log.md",
+    "gaps.md",
+    "raw/.gitkeep",
+    "projects/.gitkeep",
+)
+
+
+def test_fresh_scaffold_creates_full_tree(tmp_path: Path) -> None:
+    result = scaffold_wiki(tmp_path)
+
+    assert isinstance(result, ScaffoldResult)
+    assert result.git_initialized is True
+    assert (tmp_path / ".git").is_dir()
+    assert result.target == tmp_path.resolve()
+
+    created_set = set(result.created_files)
+    expected_set = {(tmp_path / rel).resolve() for rel in _EXPECTED_FILES}
+    assert created_set == expected_set
+    for created in result.created_files:
+        assert created.is_absolute()
+        assert created.is_file()
+    assert result.skipped_files == ()
+
+
+def test_idempotent_second_run_creates_nothing(tmp_path: Path) -> None:
+    first = scaffold_wiki(tmp_path)
+    snapshots = {p: p.read_bytes() for p in first.created_files}
+
+    second = scaffold_wiki(tmp_path)
+
+    assert second.created_files == ()
+    assert set(second.skipped_files) == set(first.created_files)
+    assert second.git_initialized is False
+    for path, original in snapshots.items():
+        assert path.read_bytes() == original
+
+
+def test_existing_git_repo_not_reinitialized(tmp_path: Path) -> None:
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    head = tmp_path / ".git" / "HEAD"
+    mtime_before = head.stat().st_mtime_ns
+
+    result = scaffold_wiki(tmp_path)
+
+    assert result.git_initialized is False
+    assert head.stat().st_mtime_ns == mtime_before
+
+
+def test_hand_edited_config_preserved(tmp_path: Path) -> None:
+    custom = b"# my custom config\n"
+    (tmp_path / "config.yaml").write_bytes(custom)
+
+    result = scaffold_wiki(tmp_path)
+
+    config_path = (tmp_path / "config.yaml").resolve()
+    assert (tmp_path / "config.yaml").read_bytes() == custom
+    assert config_path in result.skipped_files
+    assert config_path not in result.created_files
+
+
+def test_seed_dates_substituted_in_index(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+    today = date.today().isoformat()
+
+    text = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert f"created: {today}" in text
+    assert f"updated: {today}" in text
+    assert "{date}" not in text
+
+
+def test_log_entry_has_today(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+    today = date.today().isoformat()
+
+    text = (tmp_path / "log.md").read_text(encoding="utf-8")
+    assert f"## [{today}] init | wiki scaffolded" in text
+    assert "{date}" not in text
+
+
+def test_seed_pages_pass_frontmatter_parser(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+
+    index = parse_page(tmp_path / "index.md")
+    log = parse_page(tmp_path / "log.md")
+    gaps = parse_page(tmp_path / "gaps.md")
+
+    assert index.frontmatter.type == "overview"
+    assert log.frontmatter.type == "log"
+    assert gaps.frontmatter.type == "gaps"
+
+
+def test_target_directory_is_created_if_missing(tmp_path: Path) -> None:
+    nested = tmp_path / "new" / "wiki"
+
+    result = scaffold_wiki(nested)
+
+    assert nested.is_dir()
+    assert (nested / "config.yaml").is_file()
+    assert (nested / "index.md").is_file()
+    assert result.target == nested.resolve()
+
+
+def test_atomic_write_failure_cleans_up_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_replace(src: str | Path, dst: str | Path) -> None:
+        raise OSError("simulated atomic replace failure")
+
+    monkeypatch.setattr(init_module.os, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="simulated atomic replace failure"):
+        scaffold_wiki(tmp_path)
+
+    assert list(tmp_path.rglob("*.tmp")) == []
