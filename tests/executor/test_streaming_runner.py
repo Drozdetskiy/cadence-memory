@@ -377,3 +377,36 @@ def test_argv_contains_verbose_after_output_format() -> None:
     argv = runner.captured_argv
     idx = argv.index("--output-format")
     assert argv[idx : idx + 3] == ["--output-format", "stream-json", "--verbose"]
+
+
+def test_runresult_success_true_when_exit_code_zero() -> None:
+    result = RunResult(
+        exit_code=0,
+        final_text="ok",
+        tool_calls=(),
+        cost_usd=None,
+        duration_ms=None,
+        error=None,
+    )
+    assert result.success is True
+
+
+def test_runresult_success_false_when_exit_code_nonzero() -> None:
+    result_one = RunResult(
+        exit_code=1,
+        final_text="",
+        tool_calls=(),
+        cost_usd=None,
+        duration_ms=None,
+        error="some error",
+    )
+    result_watchdog = RunResult(
+        exit_code=124,
+        final_text="",
+        tool_calls=(),
+        cost_usd=None,
+        duration_ms=None,
+        error="idle watchdog timeout",
+    )
+    assert result_one.success is False
+    assert result_watchdog.success is False
