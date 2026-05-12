@@ -1,1 +1,15 @@
-{}
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cadence-memory status --short && head -60 index.md 2>/dev/null && tail -15 log.md 2>/dev/null"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -71,9 +71,21 @@ When asked about this wiki's contents:
 4. If pages contradict each other, surface the contradiction explicitly and
    add an entry to `gaps.md` rather than silently picking one.
 
-## Worker conventions
+## Maintenance
 
 The cadence-memory worker writes pages, the `index.md` catalog, and the `log.md`
 audit on every commit it ingests. It does NOT touch `raw/` (manual drop-zone)
 and respects hand-edits — disagreements between an ingest pass and a manual
 edit are recorded in `gaps.md`, never silently overwritten.
+
+When the wiki contradicts code you are reading, file an entry in `gaps.md` —
+never silently rewrite the page.
+
+## Operations
+
+| Command | Description |
+|---------|-------------|
+| `cadence-memory worker run` | Walk pending commits and ingest them via Claude. |
+| `cadence-memory lint` | Audit the master wiki for orphans, broken links, contradictions, and missing pages. |
+| `cadence-memory ingest <path>` | Ingest a single non-commit source (article, meeting notes, spec) into the master wiki. |
+| `cadence-memory status` | Print at-a-glance worker state for every tracked repo. |
