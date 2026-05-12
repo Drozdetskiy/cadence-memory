@@ -1,0 +1,4 @@
+.cadence-memory/git_cache/
+.cadence-memory/state.json
+.cadence-memory/worker.lock
+*.tmp
