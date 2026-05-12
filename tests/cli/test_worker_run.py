@@ -14,6 +14,7 @@ from cadence_memory.config.writer import add_repo
 from cadence_memory.wiki import scaffold_wiki
 from cadence_memory.worker.run import RunSummary
 from cadence_memory.worker.state import WorkerState
+from tests._helpers import strip_ansi
 
 
 def _scaffold(tmp_path: Path) -> Path:
@@ -62,11 +63,12 @@ def test_cli_worker_run_help_shows_flags() -> None:
     result = runner.invoke(app, ["worker", "run", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "--mode" in result.stdout
-    assert "--only" in result.stdout
-    assert "--limit" in result.stdout
-    assert "--dry-run" in result.stdout
-    assert "--wiki" in result.stdout
+    plain = strip_ansi(result.stdout)
+    assert "--mode" in plain
+    assert "--only" in plain
+    assert "--limit" in plain
+    assert "--dry-run" in plain
+    assert "--wiki" in plain
 
 
 def test_cli_run_dry_run_passes_flag_through(
