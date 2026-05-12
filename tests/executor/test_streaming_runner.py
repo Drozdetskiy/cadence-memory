@@ -365,3 +365,15 @@ def test_runner_default_idle_timeout_used_when_omitted() -> None:
     result = runner.run(prompt="x", model="m")
 
     assert result.exit_code == 0
+
+
+def test_argv_contains_verbose_after_output_format() -> None:
+    fake = FakePopen(returncode=0)
+    runner = _FakeRunner(fake)
+
+    runner.run(prompt="x", model="m")
+
+    assert runner.captured_argv is not None
+    argv = runner.captured_argv
+    idx = argv.index("--output-format")
+    assert argv[idx : idx + 3] == ["--output-format", "stream-json", "--verbose"]

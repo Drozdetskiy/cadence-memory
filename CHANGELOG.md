@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1 — 2026-05-13
+
+### Fixes
+- Bootstrap worker passes `--verbose` to the Claude subprocess so Claude Code 2.1.x accepts `-p` + `--output-format stream-json` without erroring.
+
 ## v0.4.0 — 2026-05-12
 
 Full rewrite. v2 is a Karpathy-style LLM-maintained wiki, not a chunked
