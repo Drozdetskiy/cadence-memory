@@ -16,6 +16,8 @@ _EXPECTED_FILES: tuple[str, ...] = (
     "config.yaml",
     "CLAUDE.md",
     ".claude/settings.json",
+    ".claude/skills/wiki-researcher.md",
+    ".claude/skills/wiki-ingest.md",
     ".gitignore",
     "index.md",
     "log.md",

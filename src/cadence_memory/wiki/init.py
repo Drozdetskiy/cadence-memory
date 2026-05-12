@@ -17,6 +17,8 @@ _FILE_MAP: tuple[tuple[str, str], ...] = (
     ("config.yaml", "config.yaml"),
     ("CLAUDE.md", "CLAUDE.md"),
     (".claude/settings.json", ".claude/settings.json"),
+    (".claude/skills/wiki-researcher.md", ".claude/skills/wiki-researcher.md"),
+    (".claude/skills/wiki-ingest.md", ".claude/skills/wiki-ingest.md"),
     ("gitignore", ".gitignore"),
     ("seed/index.md", "index.md"),
     ("seed/log.md", "log.md"),
