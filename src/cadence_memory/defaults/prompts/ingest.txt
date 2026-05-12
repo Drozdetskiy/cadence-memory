@@ -1,0 +1,37 @@
+You are maintaining a master wiki of source-code knowledge.
+
+Wiki root: $wiki_root
+Source repo: $repo_name
+Commit: $short_sha — $commit_subject
+
+# Commit body
+$commit_body
+
+# Changed files
+$changed_files
+
+# Diff
+$diff
+
+# Current wiki index (head)
+$index_head
+
+# Recent wiki log (tail)
+$log_tail
+
+## Your task
+Update the wiki to reflect this commit's effects on the knowledge base.
+
+Rules:
+- Edit only files inside $wiki_root.
+- Do NOT touch raw/.
+- Stay within projects/$repo_name/ for repo-specific pages.
+- Cross-project pages you MAY touch: patterns.md, learnings.md, decisions.md, gaps.md, index.md, log.md.
+- Every page you create or modify must include or preserve YAML frontmatter
+  with: title, type, source, project, created, updated, tags, confidence.
+- Use [[wikilinks]] for cross-references.
+- If the diff contradicts an existing page, ADD an entry to gaps.md flagging
+  the contradiction; do NOT silently rewrite history.
+- Append ONE entry to log.md with prefix `## [<today>] ingest | $repo_name $short_sha — $commit_subject`.
+- After editing, do not summarize back to me. Return a single short final
+  message confirming the changes.
