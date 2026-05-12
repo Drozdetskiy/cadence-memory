@@ -110,9 +110,7 @@ def run_bootstrap(
     pages_total = 0
 
     plans_present = _detect_plans_dirs(repo_path)
-    plans_directive_template = (
-        _PLANS_DIRECTIVE_INGEST if plans_present else _PLANS_DIRECTIVE_SKIP
-    )
+    plans_directive_template = _PLANS_DIRECTIVE_INGEST if plans_present else _PLANS_DIRECTIVE_SKIP
 
     for stage in stages:
         template_text = _load_stage_template(stage)
