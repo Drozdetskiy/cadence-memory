@@ -172,6 +172,7 @@ class StreamingClaudeRunner:
             "-p",
             "--output-format",
             "stream-json",
+            "--verbose",
             "--input-format",
             "stream-json",
             "--model",
