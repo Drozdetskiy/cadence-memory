@@ -279,6 +279,44 @@ def test_parse_log_records_rejects_bad_field_count() -> None:
     assert "6 fields" in str(exc_info.value)
 
 
+def test_head_local_returns_none_when_not_cloned(tmp_path: Path) -> None:
+    cache = DefaultGitCache(root=tmp_path / "cache")
+    assert cache.head_local(name="repo", branch="main") is None
+
+
+def test_head_local_returns_sha_after_clone(tmp_path: Path) -> None:
+    remote = _make_local_remote(tmp_path, name="remote", commits=["Initial"])
+    cache = DefaultGitCache(root=tmp_path / "cache")
+    cache.ensure(name="repo", url=f"file://{remote}", branch="main")
+
+    local_sha = cache.head_local(name="repo", branch="main")
+    assert local_sha is not None
+    assert local_sha == cache.head(name="repo", branch="main")
+
+
+def test_head_local_does_not_fetch(tmp_path: Path) -> None:
+    remote = _make_local_remote(tmp_path, name="remote", commits=["Initial"])
+    cache = DefaultGitCache(root=tmp_path / "cache")
+    cache.ensure(name="repo", url=f"file://{remote}", branch="main")
+    pre_fetch_sha = cache.head(name="repo", branch="main")
+
+    (remote / "second.txt").write_text("more\n")
+    _run_git(remote, "add", ".")
+    _run_git(remote, "commit", "-m", "Second")
+    new_upstream_head = _run_git(remote, "rev-parse", "HEAD").strip()
+    assert new_upstream_head != pre_fetch_sha
+
+    assert cache.head_local(name="repo", branch="main") == pre_fetch_sha
+
+
+def test_head_local_returns_none_for_unknown_branch(tmp_path: Path) -> None:
+    remote = _make_local_remote(tmp_path, name="remote", commits=["Initial"])
+    cache = DefaultGitCache(root=tmp_path / "cache")
+    cache.ensure(name="repo", url=f"file://{remote}", branch="main")
+
+    assert cache.head_local(name="repo", branch="nonexistent") is None
+
+
 def test_root_commit_diff(tmp_path: Path) -> None:
     remote = _make_local_remote(tmp_path, name="remote", commits=["Root"])
     root_sha = _run_git(remote, "rev-parse", "HEAD").strip()

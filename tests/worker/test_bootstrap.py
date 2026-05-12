@@ -89,6 +89,9 @@ class _FakeGitCache:
     def head(self, *, name: str, branch: str) -> str:  # pragma: no cover - unused
         raise NotImplementedError
 
+    def head_local(self, *, name: str, branch: str) -> str | None:  # pragma: no cover - unused
+        raise NotImplementedError
+
     def show_commit(self, *, name: str, sha: str) -> CommitInfo:  # pragma: no cover - unused
         raise NotImplementedError
 

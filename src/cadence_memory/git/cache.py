@@ -32,6 +32,14 @@ class GitCache(Protocol):
 
     def head(self, *, name: str, branch: str) -> str: ...
 
+    def head_local(self, *, name: str, branch: str) -> str | None:
+        """Return the locally-known SHA of `origin/<branch>` without fetching.
+
+        Returns `None` if the repo is not yet cloned or the ref does not exist
+        locally. Never performs network I/O.
+        """
+        ...
+
     def show_commit(self, *, name: str, sha: str) -> CommitInfo: ...
 
     def diff(self, *, name: str, sha: str) -> str: ...
@@ -70,6 +78,22 @@ class DefaultGitCache:
             ["git", "rev-parse", f"origin/{branch}"],
             cwd=self._root / name,
         ).strip()
+
+    def head_local(self, *, name: str, branch: str) -> str | None:
+        path = self._root / name
+        if not path.exists():
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+            cwd=path,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return None
+        sha = result.stdout.strip()
+        return sha or None
 
     def ensure(self, *, name: str, url: str, branch: str) -> CloneResult:
         self._root.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,7 @@ import typer
 
 from cadence_memory import __version__
 from cadence_memory.cli_commands.repos import repos_app
+from cadence_memory.cli_commands.status import cmd_status
 from cadence_memory.cli_commands.worker import cmd_run, worker_app
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
@@ -34,6 +35,7 @@ app = typer.Typer(
 )
 app.add_typer(repos_app)
 app.add_typer(worker_app)
+app.command("status")(cmd_status)
 
 
 def _version_callback(value: bool) -> None:

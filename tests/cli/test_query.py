@@ -290,19 +290,13 @@ def test_cli_query_forced_qmd_returns_qmd_backend(
     wiki = _scaffold(tmp_path)
     captured: list[_SearchCall] = []
     monkeypatch.setattr("cadence_memory.cli.QmdBackend.available", staticmethod(lambda: True))
-    monkeypatch.setattr(
-        "cadence_memory.cli.RipgrepBackend.available", staticmethod(lambda: True)
-    )
+    monkeypatch.setattr("cadence_memory.cli.RipgrepBackend.available", staticmethod(lambda: True))
 
-    def fake_qmd_search(
-        self: object, *, query: str, wiki_dir: Path, limit: int
-    ) -> tuple[Hit, ...]:
+    def fake_qmd_search(self: object, *, query: str, wiki_dir: Path, limit: int) -> tuple[Hit, ...]:
         captured.append(_SearchCall(kwargs={"backend": "qmd"}))
         return ()
 
-    def fake_rg_search(
-        self: object, *, query: str, wiki_dir: Path, limit: int
-    ) -> tuple[Hit, ...]:
+    def fake_rg_search(self: object, *, query: str, wiki_dir: Path, limit: int) -> tuple[Hit, ...]:
         captured.append(_SearchCall(kwargs={"backend": "ripgrep"}))
         return ()
 
@@ -322,19 +316,13 @@ def test_cli_query_forced_ripgrep_returns_ripgrep_backend(
     wiki = _scaffold(tmp_path)
     captured: list[_SearchCall] = []
     monkeypatch.setattr("cadence_memory.cli.QmdBackend.available", staticmethod(lambda: True))
-    monkeypatch.setattr(
-        "cadence_memory.cli.RipgrepBackend.available", staticmethod(lambda: True)
-    )
+    monkeypatch.setattr("cadence_memory.cli.RipgrepBackend.available", staticmethod(lambda: True))
 
-    def fake_qmd_search(
-        self: object, *, query: str, wiki_dir: Path, limit: int
-    ) -> tuple[Hit, ...]:
+    def fake_qmd_search(self: object, *, query: str, wiki_dir: Path, limit: int) -> tuple[Hit, ...]:
         captured.append(_SearchCall(kwargs={"backend": "qmd"}))
         return ()
 
-    def fake_rg_search(
-        self: object, *, query: str, wiki_dir: Path, limit: int
-    ) -> tuple[Hit, ...]:
+    def fake_rg_search(self: object, *, query: str, wiki_dir: Path, limit: int) -> tuple[Hit, ...]:
         captured.append(_SearchCall(kwargs={"backend": "ripgrep"}))
         return ()
 
