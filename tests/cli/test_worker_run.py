@@ -210,18 +210,6 @@ def test_cli_run_lock_held_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "Traceback" not in result.stderr
 
 
-def test_cli_daemon_errors_not_implemented(tmp_path: Path) -> None:
-    _scaffold(tmp_path)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["worker", "daemon"])
-
-    assert result.exit_code == 2
-    assert "task 1014" in result.stderr
-    assert "Traceback" not in result.stdout
-    assert "Traceback" not in result.stderr
-
-
 def test_cli_run_passes_only_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _scaffold(tmp_path)
     captured: list[dict[str, Any]] = []

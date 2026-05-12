@@ -10,10 +10,12 @@ import typer
 
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
+from cadence_memory.config.schema import Config
 from cadence_memory.executor.runner import DefaultClaudeRunner
 from cadence_memory.git.cache import DefaultGitCache
 from cadence_memory.wiki import WikiNotFoundError
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
+from cadence_memory.worker.daemon import DaemonSignals, run_daemon
 from cadence_memory.worker.lock import WorkerBusyError, worker_lock
 from cadence_memory.worker.run import run_pending
 from cadence_memory.worker.state import StateError, load_state
@@ -108,9 +110,50 @@ def cmd_run(
 
 
 @worker_app.command("daemon")
-def cmd_daemon() -> None:
-    """Long-running daemon mode (not yet implemented)."""
-    _fail("daemon mode not yet implemented (task 1014)", code=2)
+def cmd_daemon(
+    once: Annotated[
+        bool,
+        typer.Option("--once", help="Run a single tick (equivalent to `worker run`) and exit."),
+    ] = False,
+    wiki: Annotated[
+        Path | None,
+        typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
+    ] = None,
+) -> None:
+    """Long-running daemon that polls for new commits on a fixed interval."""
+    if once:
+        cmd_run(mode="commits", only=None, limit=None, dry_run=False, wiki=wiki)
+        return
+
+    try:
+        wiki_dir = _resolve_wiki_dir(wiki)
+    except WikiNotFoundError as exc:
+        _fail(str(exc))
+
+    try:
+        config = load_config(wiki_dir / CONFIG_FILENAME)
+    except ConfigError as exc:
+        _fail(str(exc))
+
+    def _config_factory() -> Config:
+        return load_config(wiki_dir / CONFIG_FILENAME)
+
+    def _cache_factory() -> DefaultGitCache:
+        return DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")
+
+    signals = DaemonSignals()
+    run_daemon(
+        wiki_dir=wiki_dir,
+        poll_interval_s=config.worker.poll_interval_s,
+        config_factory=_config_factory,
+        state_path=wiki_dir / ".cadence-memory" / "state.json",
+        cache_factory=_cache_factory,
+        runner_factory=DefaultClaudeRunner,
+        signals=signals,
+    )
+
+    if signals.interrupt.is_set():
+        raise typer.Exit(code=130)
 
 
 __all__ = ["worker_app"]
