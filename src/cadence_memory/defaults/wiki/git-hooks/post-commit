@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -e
+command -v qmd >/dev/null 2>&1 || exit 0
+( qmd index "$(git rev-parse --show-toplevel)" --collection master >/dev/null 2>&1 & ) || true
