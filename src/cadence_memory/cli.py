@@ -5,7 +5,7 @@ import typer
 
 from cadence_memory import __version__
 from cadence_memory.cli_commands.repos import repos_app
-from cadence_memory.cli_commands.worker import worker_app
+from cadence_memory.cli_commands.worker import cmd_run, worker_app
 from cadence_memory.wiki import scaffold_wiki
 
 app = typer.Typer(
@@ -61,6 +61,41 @@ def init(
         typer.echo(f"exists: {display}")
     if result.git_initialized:
         typer.echo("git initialized")
+
+
+@app.command("bootstrap")
+def cmd_bootstrap(
+    repo: Annotated[
+        str,
+        typer.Argument(help="Name of the repo (from cadence-memory.toml) to bootstrap."),
+    ],
+    wiki: Annotated[
+        Path | None,
+        typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
+    ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help=(
+                "Leave last_sha unchanged when any stage failed "
+                "(default advances to HEAD even on partial failure)."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Run the 5-stage initial bootstrap for a single repo.
+
+    Alias for 'worker run --mode bootstrap --only <repo>'.
+    """
+    cmd_run(
+        mode="bootstrap",
+        only=repo,
+        limit=None,
+        dry_run=False,
+        wiki=wiki,
+        strict=strict,
+    )
 
 
 if __name__ == "__main__":

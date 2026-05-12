@@ -1,0 +1,56 @@
+Before doing anything else, detect the stack by reading manifest files at
+the repo root: package.json, pyproject.toml, requirements.txt, Cargo.toml,
+go.mod, Gemfile, mix.exs, build.gradle, pom.xml, composer.json.
+Report which you found in one short line. Then proceed with the stage-
+specific task below, adapting your reading list to that stack.
+
+Repo: $repo_name at $repo_path
+Wiki root: $wiki_root
+HEAD: $head_sha
+Today: $today
+
+Stage 4 of 5 — gaps and catalog.
+
+Re-read everything generated so far for this project:
+  - $wiki_root/projects/$repo_name/data-model.md and models/*.md
+  - $wiki_root/projects/$repo_name/routes.md and controllers/*.md
+  - $wiki_root/projects/$repo_name/architecture.md, services/*.md,
+    decisions.md, dependencies.md (or gems.md), active-areas.md
+And re-scan the raw sources under $repo_path: schema files, route
+definitions, and any README / docs that have not been covered yet.
+
+Generate:
+  - $wiki_root/projects/$repo_name/gaps.md — open questions, undocumented
+    behavior, contradictions between the pages produced so far, areas of the
+    code that none of the earlier pages cover. Each entry: one short bullet,
+    a [[wikilink]] back to the page where the gap surfaced (if any), and an
+    optional "next step" suggestion.
+  - Update $wiki_root/index.md to include the full catalog of pages
+    generated for $repo_name. Group by section (data-model, routes,
+    architecture, services, decisions, dependencies, active-areas, gaps).
+    Use [[wikilinks]] for every entry.
+
+Every page you create or modify must carry / preserve the v2 frontmatter
+template:
+
+    ---
+    title: <page title>
+    type: gaps | overview
+    source: bootstrap
+    project: $repo_name
+    created: $today
+    updated: $today
+    tags: [gaps, ...]
+    confidence: high | medium | low
+    ---
+
+Rules:
+- Edit only files inside $wiki_root.
+- Do NOT touch $wiki_root/raw/.
+- $wiki_root/index.md is cross-project; preserve its existing structure
+  and append / merge the $repo_name section rather than rewriting the file.
+
+After editing, append one entry to $wiki_root/log.md:
+`## [$today] bootstrap-4 | $repo_name $head_sha — gaps`.
+
+Return a single short confirmation message; do not summarize the changes.

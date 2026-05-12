@@ -118,14 +118,14 @@ def test_cli_run_exits_1_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "failed 1" in result.stdout
 
 
-def test_cli_run_bootstrap_mode_errors(tmp_path: Path) -> None:
+def test_cli_run_bootstrap_mode_requires_only(tmp_path: Path) -> None:
     _scaffold(tmp_path)
     runner = CliRunner()
 
     result = runner.invoke(app, ["worker", "run", "--mode", "bootstrap", "--wiki", str(tmp_path)])
 
     assert result.exit_code == 2
-    assert "not yet implemented (task 1015)" in result.stderr
+    assert "requires --only" in result.stderr
     assert "Traceback" not in result.stdout
     assert "Traceback" not in result.stderr
 
