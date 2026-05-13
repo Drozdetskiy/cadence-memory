@@ -21,7 +21,6 @@ from cadence_memory.executor.events import (
 )
 from cadence_memory.executor.process_group import ProcessGroupCleanup
 
-_DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = ("PATH", "HOME", "USER", "ANTHROPIC_API_KEY")
 _STDERR_BUFFER_LINES = 200
 _STDERR_JOIN_TIMEOUT_S = 1.0
 _PROC_WAIT_TIMEOUT_S = 5.0
@@ -49,11 +48,9 @@ class StreamingClaudeRunner:
         *,
         claude_command: str = "claude",
         env_overrides: dict[str, str] | None = None,
-        env_passthrough: tuple[str, ...] = _DEFAULT_ENV_PASSTHROUGH,
     ) -> None:
         self._claude_command = claude_command
         self._env_overrides = dict(env_overrides) if env_overrides else {}
-        self._env_passthrough = tuple(env_passthrough)
 
     def run(
         self,
@@ -190,11 +187,8 @@ class StreamingClaudeRunner:
         return argv
 
     def _build_env(self) -> dict[str, str]:
-        env: dict[str, str] = {}
-        for key in self._env_passthrough:
-            value = os.environ.get(key)
-            if value is not None:
-                env[key] = value
+        env: dict[str, str] = dict(os.environ)
+        env.pop("CLAUDECODE", None)
         env.update(self._env_overrides)
         return env
 
