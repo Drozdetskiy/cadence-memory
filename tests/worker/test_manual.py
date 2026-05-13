@@ -430,6 +430,101 @@ def test_runner_failure_reverts_and_logs(tmp_path: Path) -> None:
     assert last_subject.startswith("cadence-memory: ingest failure manual")
 
 
+def test_ingest_file_preserves_user_dirty_file_on_failure(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "config.yaml").write_text("model: old\n", encoding="utf-8")
+    _git("add", "config.yaml", cwd=wiki)
+    _git("commit", "-m", "add config", cwd=wiki)
+    (wiki / "config.yaml").write_text("model: user-edit\n", encoding="utf-8")
+    src = _write_source(tmp_path)
+
+    def fail(cwd: Path) -> ClaudeResult:
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=None,
+            duration_ms=None,
+            tool_call_count=0,
+            error="boom",
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[fail])
+
+    outcome = ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.success is False
+    assert (wiki / "config.yaml").read_text(encoding="utf-8") == "model: user-edit\n"
+
+
+def test_ingest_file_preserves_user_dirty_file_on_frontmatter_error(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "config.yaml").write_text("model: old\n", encoding="utf-8")
+    _git("add", "config.yaml", cwd=wiki)
+    _git("commit", "-m", "add config", cwd=wiki)
+    (wiki / "config.yaml").write_text("model: user-edit\n", encoding="utf-8")
+    src = _write_source(tmp_path)
+
+    def write_bad_frontmatter(cwd: Path) -> ClaudeResult:
+        (cwd / "stub.md").write_text("no frontmatter here\n", encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="wrote",
+            cost_usd=0.02,
+            duration_ms=120,
+            tool_call_count=1,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_bad_frontmatter])
+
+    outcome = ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.success is False
+    assert not (wiki / "stub.md").exists()
+    assert (wiki / "config.yaml").read_text(encoding="utf-8") == "model: user-edit\n"
+
+
+def test_ingest_file_reverts_claude_changes_on_runner_failure(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    src = _write_source(tmp_path)
+
+    def write_then_fail(cwd: Path) -> ClaudeResult:
+        (cwd / "claude_new.md").write_text("claude output\n", encoding="utf-8")
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=None,
+            duration_ms=None,
+            tool_call_count=1,
+            error="boom",
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_then_fail])
+
+    outcome = ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.success is False
+    assert not (wiki / "claude_new.md").exists()
+
+
 def test_commit_message_uses_basename(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     raw_dir = tmp_path / "raw" / "notes"

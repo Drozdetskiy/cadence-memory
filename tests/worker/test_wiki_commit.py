@@ -126,11 +126,75 @@ def test_revert_wiki_restores_modified_and_removes_untracked(tmp_path: Path) -> 
     (wiki / "subdir").mkdir()
     (wiki / "subdir" / "nested.md").write_text("nested\n", encoding="utf-8")
 
-    revert_wiki(wiki)
+    revert_wiki(wiki, preserve=frozenset())
 
     assert (wiki / "index.md").read_text(encoding="utf-8") == "# index\n"
     assert not (wiki / "stub.md").exists()
     assert not (wiki / "subdir").exists()
+
+
+def test_revert_preserves_user_dirty_tracked_file(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "notes.md").write_text("# notes\n", encoding="utf-8")
+    _git("add", "notes.md", cwd=wiki)
+    _git("commit", "-m", "add notes", cwd=wiki)
+
+    (wiki / "index.md").write_text("user edit\n", encoding="utf-8")
+    (wiki / "notes.md").write_text("claude edit\n", encoding="utf-8")
+
+    revert_wiki(wiki, preserve=frozenset({(wiki / "index.md").resolve()}))
+
+    assert (wiki / "index.md").read_text(encoding="utf-8") == "user edit\n"
+    assert (wiki / "notes.md").read_text(encoding="utf-8") == "# notes\n"
+
+
+def test_revert_removes_claude_untracked_file(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "projects" / "foo").mkdir(parents=True)
+    (wiki / "projects" / "foo" / "overview.md").write_text("stub\n", encoding="utf-8")
+
+    revert_wiki(wiki)
+
+    assert not (wiki / "projects" / "foo" / "overview.md").exists()
+    assert not (wiki / "projects").exists()
+
+
+def test_revert_preserves_user_untracked_file(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "raw" / "notes").mkdir(parents=True)
+    (wiki / "raw" / "notes" / "draft.md").write_text("draft\n", encoding="utf-8")
+
+    revert_wiki(wiki, preserve=frozenset({(wiki / "raw" / "notes" / "draft.md").resolve()}))
+
+    assert (wiki / "raw" / "notes" / "draft.md").read_text(encoding="utf-8") == "draft\n"
+
+
+def test_revert_no_op_when_nothing_changed(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    head_before = _git("rev-parse", "HEAD", cwd=wiki).stdout.strip()
+
+    revert_wiki(wiki)
+
+    head_after = _git("rev-parse", "HEAD", cwd=wiki).stdout.strip()
+    assert head_before == head_after
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=wiki,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert result.stdout.strip() == ""
+
+
+def test_revert_preserves_subset_when_claude_also_touches_same_file(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "index.md").write_text("user edit\n", encoding="utf-8")
+    (wiki / "index.md").write_text("claude further edit\n", encoding="utf-8")
+
+    revert_wiki(wiki, preserve=frozenset({(wiki / "index.md").resolve()}))
+
+    assert (wiki / "index.md").read_text(encoding="utf-8") == "claude further edit\n"
 
 
 def test_append_log_failure_commits_entry(tmp_path: Path) -> None:

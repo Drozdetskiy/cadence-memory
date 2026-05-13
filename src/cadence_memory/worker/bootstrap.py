@@ -113,6 +113,7 @@ def run_bootstrap(
     plans_directive_template = _PLANS_DIRECTIVE_INGEST if plans_present else _PLANS_DIRECTIVE_SKIP
 
     for stage in stages:
+        pre_dirty = frozenset(list_touched_paths(wiki_dir))
         template_text = _load_stage_template(stage)
         today_iso = clock().date().isoformat()
         subs: dict[str, str] = {
@@ -140,7 +141,7 @@ def run_bootstrap(
         subject = f"bootstrap-{stage}"
 
         if not result.success:
-            revert_wiki(wiki_dir)
+            revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
                 repo_name=repo_cfg.name,
@@ -164,7 +165,7 @@ def run_bootstrap(
                 break
 
         if frontmatter_error is not None:
-            revert_wiki(wiki_dir)
+            revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
                 repo_name=repo_cfg.name,

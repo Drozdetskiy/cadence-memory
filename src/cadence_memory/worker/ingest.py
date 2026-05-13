@@ -172,6 +172,7 @@ def ingest_event(
     costs: list[float] = []
     durations: list[int] = []
     touched: tuple[Path, ...] = ()
+    pre_dirty = frozenset(list_touched_paths(wiki_dir))
 
     def _aggregated_cost() -> float | None:
         return sum(costs) if costs else None
@@ -213,7 +214,7 @@ def ingest_event(
             durations.append(result.duration_ms)
 
         if not result.success:
-            revert_wiki(wiki_dir)
+            revert_wiki(wiki_dir, preserve=pre_dirty)
             today_iso = clock().date().isoformat()
             append_log_failure(
                 wiki_dir=wiki_dir,
@@ -240,7 +241,7 @@ def ingest_event(
             try:
                 parse_page(path)
             except FrontmatterError as exc:
-                revert_wiki(wiki_dir)
+                revert_wiki(wiki_dir, preserve=pre_dirty)
                 today_iso = clock().date().isoformat()
                 append_log_failure(
                     wiki_dir=wiki_dir,

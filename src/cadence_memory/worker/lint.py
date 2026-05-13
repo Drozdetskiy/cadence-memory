@@ -120,6 +120,8 @@ def run_lint(
         previous_branch = create_or_switch_branch(wiki_dir, branch_name)
         branch_used = branch_name
 
+    pre_dirty = frozenset(list_touched_paths(wiki_dir))
+
     rendered = Template(template_text).substitute(
         wiki_root=str(wiki_dir),
         today=today_iso,
@@ -138,7 +140,7 @@ def run_lint(
     )
 
     if not result.success:
-        revert_wiki(wiki_dir)
+        revert_wiki(wiki_dir, preserve=pre_dirty)
         append_log_failure(
             wiki_dir=wiki_dir,
             repo_name="lint",
@@ -164,7 +166,7 @@ def run_lint(
         try:
             parse_page(path)
         except FrontmatterError as exc:
-            revert_wiki(wiki_dir)
+            revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
                 repo_name="lint",
