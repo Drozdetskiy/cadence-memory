@@ -56,7 +56,7 @@ Everything else from v1 is deleted.
 
 5. **Search is a navigation tool, not an answer engine.** `qmd` MCP gives Claude a way to find pages quickly during a session. The synthesis itself is on the page, not derived from raw retrieval.
 
-6. **Headless, budgeted, sandboxed Claude.** Every worker LLM call uses `claude -p --bare --max-budget-usd <cap> --allowedTools <readwrite-only> --output-format stream-json`. No surprise costs, no network egress beyond Anthropic, no plugin drift.
+6. **Headless, budgeted, sandboxed Claude.** Every worker LLM call uses `claude -p --max-budget-usd <cap> --allowedTools <readwrite-only> --output-format stream-json`. No surprise costs, no network egress beyond Anthropic, no plugin drift.
 
 ---
 
@@ -283,7 +283,7 @@ For each repo in `config.yaml`:
 4. **For each event** (single commit, or noise batch):
    - Gather context: commit subject + body, full `git diff` for that range, list of changed files.
    - Render the **ingest prompt** (§7), passing the wiki tree, current `index.md` head, and `log.md` tail as context.
-   - Run `claude -p --bare --max-budget-usd <budget> --allowedTools "Read,Write,Edit,Glob,Grep" --output-format stream-json`. The streaming executor parses events and applies the idle-timeout watchdog.
+   - Run `claude -p --max-budget-usd <budget> --allowedTools "Read,Write,Edit,Glob,Grep" --output-format stream-json`. The streaming executor parses events and applies the idle-timeout watchdog.
    - Claude writes/updates pages, `index.md`, `log.md` directly via `Write`/`Edit`.
    - On success, the worker stages the wiki diff (`git add -A` inside master wiki), commits with message `cadence-memory: ingest <repo> <short-sha> <subject>` (no `Co-Authored-By`), and updates `state.json[repo].last_sha`.
    - On Claude failure (non-zero exit, watchdog, budget exceeded): write a stub entry to `log.md` (`## [<date>] FAILED ingest <repo> <sha>: <reason>`), do NOT advance `last_sha`, continue with the next repo. The user can rerun.

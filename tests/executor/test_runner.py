@@ -65,22 +65,9 @@ def _ok_result(
     )
 
 
-def test_default_runner_includes_bare_in_extra_args() -> None:
+def test_default_runner_passes_no_extra_args() -> None:
     fake = FakeStreamingRunner(_ok_result())
     runner = DefaultClaudeRunner(streaming=fake)
-    runner.run(
-        prompt="hi",
-        model="claude-opus-4-7",
-        budget_usd=None,
-        allowed_tools=(),
-        idle_timeout_s=300,
-    )
-    assert fake.captured_extra_args == ("--bare",)
-
-
-def test_default_runner_omits_bare_when_disabled() -> None:
-    fake = FakeStreamingRunner(_ok_result())
-    runner = DefaultClaudeRunner(streaming=fake, bare=False)
     runner.run(
         prompt="hi",
         model="claude-opus-4-7",
