@@ -133,7 +133,6 @@ def run_lint(
     result = runner.run(
         prompt=rendered,
         model=config.model,
-        budget_usd=config.budget_usd,
         allowed_tools=WIKI_READWRITE,
         idle_timeout_s=config.idle_timeout_s,
         cwd=wiki_dir,

@@ -103,7 +103,6 @@ def run_bootstrap(
     short_sha = head_sha[:7]
 
     model = repo_cfg.model or config.model
-    budget_usd = repo_cfg.budget_usd if repo_cfg.budget_usd is not None else config.budget_usd
 
     failed: list[int] = []
     cost_total = 0.0
@@ -130,7 +129,6 @@ def run_bootstrap(
         result = runner.run(
             prompt=rendered,
             model=model,
-            budget_usd=budget_usd,
             allowed_tools=WIKI_READWRITE,
             idle_timeout_s=config.idle_timeout_s,
             cwd=wiki_dir,

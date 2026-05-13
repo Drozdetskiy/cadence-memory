@@ -156,7 +156,6 @@ def ingest_event(
     """
     template_text = prompt_template if prompt_template is not None else _load_default_template()
     model = repo_cfg.model or config.model
-    budget_usd = repo_cfg.budget_usd if repo_cfg.budget_usd is not None else config.budget_usd
 
     head_sha = event_head_sha(event)
     short_sha = _short_sha_for_event(event)
@@ -203,7 +202,6 @@ def ingest_event(
         result = runner.run(
             prompt=rendered,
             model=model,
-            budget_usd=budget_usd,
             allowed_tools=WIKI_READWRITE,
             idle_timeout_s=config.idle_timeout_s,
             cwd=wiki_dir,
