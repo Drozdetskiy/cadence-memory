@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.4.3 — 2026-05-14
+
+### Fixes
+- `cadence-memory` no longer passes `--bare` to the `claude` subprocess; this was breaking authentication on Claude Code 2.1.x.
+- The Claude subprocess now inherits the full parent environment (only `CLAUDECODE` is stripped), so CI credentials and Claude Code session variables pass through automatically.
+- After a failed Claude run, the wiki revert only undoes the delta Claude introduced — pre-existing user edits in the working tree are preserved.
 
 ### Changed
 - `--max-budget-usd` is no longer passed to the `claude` subprocess. The `budget_usd` config key is now ignored and will be removed in a future release.
