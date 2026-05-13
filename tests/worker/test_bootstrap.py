@@ -572,3 +572,102 @@ def test_successful_stage_creates_wiki_commit(tmp_path: Path) -> None:
     last_subject = _git("log", "-1", "--format=%s", cwd=wiki).stdout.strip()
     assert last_subject == f"cadence-memory: bootstrap-1 project-a {_SHORT_SHA}"
     assert outcome.pages_touched_total >= 1
+
+
+def test_bootstrap_preserves_user_dirty_file_on_stage_failure(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "config.yaml").write_text("model: old\n", encoding="utf-8")
+    _git("add", "config.yaml", cwd=wiki)
+    _git("commit", "-m", "add config", cwd=wiki)
+    (wiki / "config.yaml").write_text("model: user-edit\n", encoding="utf-8")
+
+    runner = _make_runner(
+        side_effects=[
+            lambda cwd: ClaudeResult(
+                success=False,
+                final_text="",
+                cost_usd=None,
+                duration_ms=None,
+                tool_call_count=0,
+                error="stage-1 boom",
+            )
+        ]
+    )
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    outcome = run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+    )
+
+    assert 1 in outcome.stages_failed
+    assert (wiki / "config.yaml").read_text(encoding="utf-8") == "model: user-edit\n"
+
+
+def test_bootstrap_preserves_user_dirty_file_on_frontmatter_error(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "config.yaml").write_text("model: old\n", encoding="utf-8")
+    _git("add", "config.yaml", cwd=wiki)
+    _git("commit", "-m", "add config", cwd=wiki)
+    (wiki / "config.yaml").write_text("model: user-edit\n", encoding="utf-8")
+
+    def write_bad_page(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "bad.md").write_text(
+            "no frontmatter\n", encoding="utf-8"
+        )
+        return _success_result()
+
+    runner = _make_runner(side_effects=[write_bad_page])
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    outcome = run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+    )
+
+    assert 1 in outcome.stages_failed
+    assert not (wiki / "projects" / "project-a" / "bad.md").exists()
+    assert (wiki / "config.yaml").read_text(encoding="utf-8") == "model: user-edit\n"
+
+
+def test_bootstrap_reverts_claude_changes_on_runner_failure(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+
+    def write_then_fail(cwd: Path) -> ClaudeResult:
+        (cwd / "claude_new.md").write_text("claude output\n", encoding="utf-8")
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=None,
+            duration_ms=None,
+            tool_call_count=1,
+            error="stage-1 boom",
+        )
+
+    runner = _make_runner(side_effects=[write_then_fail])
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    outcome = run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+    )
+
+    assert 1 in outcome.stages_failed
+    assert not (wiki / "claude_new.md").exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -77,14 +78,59 @@ def list_touched_paths(wiki_dir: Path) -> tuple[Path, ...]:
     return tuple(touched)
 
 
-def revert_wiki(wiki_dir: Path) -> None:
+def _prune_empty_parents(path: Path, *, stop_at: Path) -> None:
+    parent = path.parent
+    while parent != stop_at and parent.is_relative_to(stop_at):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+
+def revert_wiki(wiki_dir: Path, *, preserve: frozenset[Path] = frozenset()) -> None:
     """Discard every Claude-authored change in `wiki_dir`.
 
+    `preserve` carries resolved absolute paths from a pre-run
+    `list_touched_paths` snapshot; any path in that set is left untouched.
     Restores tracked files to HEAD and removes untracked files / directories
     so the next ingest does not see leftover stubs.
     """
-    _run_checked(["git", "checkout", "--", "."], cwd=wiki_dir)
-    _run_checked(["git", "clean", "-fd"], cwd=wiki_dir)
+    result = _run_checked(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=wiki_dir,
+    )
+    tracked: list[str] = []
+    untracked: list[Path] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 3:
+            continue
+        prefix = line[:2]
+        if prefix not in _TOUCHED_PREFIXES:
+            continue
+        rest = line[3:]
+        relpath = rest.split(" -> ", 1)[-1]
+        if relpath.startswith('"') and relpath.endswith('"'):
+            relpath = relpath[1:-1]
+        abs_path = (wiki_dir / relpath).resolve()
+        if abs_path in preserve:
+            continue
+        if prefix == "??":
+            untracked.append(abs_path)
+        else:
+            tracked.append(relpath)
+    if not tracked and not untracked:
+        return
+    if tracked:
+        _run_checked(["git", "checkout", "--", *tracked], cwd=wiki_dir)
+    for path in untracked:
+        if not path.exists():
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+            _prune_empty_parents(path, stop_at=wiki_dir.resolve())
 
 
 def append_log_failure(

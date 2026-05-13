@@ -128,6 +128,8 @@ def ingest_file(
     log_tail = _log_tail(wiki_dir)
     wiki_root = str(wiki_dir)
 
+    pre_dirty = frozenset(list_touched_paths(wiki_dir))
+
     rendered = Template(template_text).substitute(
         wiki_root=wiki_root,
         source_path=str(source_path),
@@ -147,7 +149,7 @@ def ingest_file(
     )
 
     if not result.success:
-        revert_wiki(wiki_dir)
+        revert_wiki(wiki_dir, preserve=pre_dirty)
         today_iso = clock().date().isoformat()
         append_log_failure(
             wiki_dir=wiki_dir,
@@ -173,7 +175,7 @@ def ingest_file(
         try:
             parse_page(path)
         except FrontmatterError as exc:
-            revert_wiki(wiki_dir)
+            revert_wiki(wiki_dir, preserve=pre_dirty)
             today_iso = clock().date().isoformat()
             append_log_failure(
                 wiki_dir=wiki_dir,
