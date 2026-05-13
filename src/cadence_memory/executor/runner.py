@@ -37,10 +37,8 @@ class DefaultClaudeRunner:
         self,
         *,
         streaming: StreamingClaudeRunner | None = None,
-        bare: bool = True,
     ) -> None:
         self._streaming = streaming if streaming is not None else StreamingClaudeRunner()
-        self._bare = bare
 
     def run(
         self,
@@ -52,14 +50,13 @@ class DefaultClaudeRunner:
         idle_timeout_s: int,
         cwd: Path | None = None,
     ) -> ClaudeResult:
-        extra_args: tuple[str, ...] = ("--bare",) if self._bare else ()
         raw = self._streaming.run(
             prompt,
             model=model,
             cwd=cwd,
             allowed_tools=allowed_tools,
             budget_usd=budget_usd,
-            extra_args=extra_args,
+            extra_args=(),
             idle_timeout_s=idle_timeout_s,
         )
         return ClaudeResult(

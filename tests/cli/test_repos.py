@@ -46,7 +46,7 @@ def test_cli_add_invocation_round_trips(tmp_path: Path) -> None:
 
 def test_cli_resolves_wiki_from_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _scaffold(tmp_path)
-    elsewhere = tmp_path.parent / "elsewhere"
+    elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.setenv("CADENCE_MEMORY_WIKI", str(tmp_path))
     monkeypatch.chdir(elsewhere)
