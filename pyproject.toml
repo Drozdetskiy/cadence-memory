@@ -43,6 +43,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 strict = true
 python_version = "3.14"
 mypy_path = "src"
+exclude = ".* 2\\.py$"
 
 [[tool.mypy.overrides]]
 module = ["frontmatter", "ruamel.*"]

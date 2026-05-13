@@ -37,7 +37,6 @@ _VALID_PAGE = (
 class _RunCall:
     prompt: str
     model: str
-    budget_usd: float | None
     allowed_tools: tuple[str, ...]
     idle_timeout_s: int
     cwd: Path | None
@@ -57,27 +56,28 @@ class _FakeClaudeRunner:
         )
     )
     calls: list[_RunCall] = field(default_factory=list)
+    extra_kwargs: list[dict[str, object]] = field(default_factory=list)
 
     def run(
         self,
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        **extra: object,
     ) -> ClaudeResult:
         self.calls.append(
             _RunCall(
                 prompt=prompt,
                 model=model,
-                budget_usd=budget_usd,
                 allowed_tools=allowed_tools,
                 idle_timeout_s=idle_timeout_s,
                 cwd=cwd,
             )
         )
+        self.extra_kwargs.append(dict(extra))
         if self.side_effects:
             side_effect = self.side_effects.pop(0)
             assert cwd is not None
@@ -443,7 +443,6 @@ def test_runner_called_with_wiki_readwrite_and_config_defaults(tmp_path: Path) -
     call = runner.calls[0]
     assert call.allowed_tools == WIKI_READWRITE
     assert call.model == "claude-opus-4-7"
-    assert call.budget_usd == 1.5
     assert call.idle_timeout_s == 600
     assert call.cwd == wiki
 
@@ -550,3 +549,18 @@ def test_lint_outcome_is_frozen_slots() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         outcome.success = False  # type: ignore[misc]
     assert not hasattr(outcome, "__dict__")
+
+
+def test_lint_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner()
+
+    run_lint(
+        wiki_dir=wiki,
+        config=_config(budget_usd=0.5),
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert len(runner.calls) == 1
+    assert runner.extra_kwargs == [{}]

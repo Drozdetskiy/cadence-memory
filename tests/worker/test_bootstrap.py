@@ -27,7 +27,6 @@ _SHORT_SHA = _HEAD_SHA[:7]
 class _RunCall:
     prompt: str
     model: str
-    budget_usd: float | None
     allowed_tools: tuple[str, ...]
     idle_timeout_s: int
     cwd: Path | None
@@ -49,27 +48,28 @@ class _FakeClaudeRunner:
         )
     )
     calls: list[_RunCall] = field(default_factory=list)
+    extra_kwargs: list[dict[str, object]] = field(default_factory=list)
 
     def run(
         self,
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        **extra: object,
     ) -> ClaudeResult:
         self.calls.append(
             _RunCall(
                 prompt=prompt,
                 model=model,
-                budget_usd=budget_usd,
                 allowed_tools=allowed_tools,
                 idle_timeout_s=idle_timeout_s,
                 cwd=cwd,
             )
         )
+        self.extra_kwargs.append(dict(extra))
         if self.side_effects:
             side_effect = self.side_effects.pop(0)
             assert cwd is not None
@@ -515,14 +515,14 @@ def test_head_sha_taken_from_clone_result(tmp_path: Path) -> None:
         assert head_sha in call.prompt
 
 
-def test_per_repo_model_and_budget_override(tmp_path: Path) -> None:
+def test_per_repo_model_override(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     runner = _FakeClaudeRunner()
     cache = _FakeGitCache(clone_result=_clone(tmp_path))
 
     run_bootstrap(
-        repo_cfg=_repo_cfg(model="claude-opus-4-7", budget_usd=1.25),
-        config=_config(model="claude-sonnet-4-6", budget_usd=0.5),
+        repo_cfg=_repo_cfg(model="claude-opus-4-7"),
+        config=_config(model="claude-sonnet-4-6"),
         wiki_dir=wiki,
         cache=cache,
         runner=runner,
@@ -532,7 +532,6 @@ def test_per_repo_model_and_budget_override(tmp_path: Path) -> None:
     assert len(runner.calls) == 5
     for call in runner.calls:
         assert call.model == "claude-opus-4-7"
-        assert call.budget_usd == 1.25
         assert call.allowed_tools == WIKI_READWRITE
 
 
@@ -619,9 +618,7 @@ def test_bootstrap_preserves_user_dirty_file_on_frontmatter_error(tmp_path: Path
     def write_bad_page(cwd: Path) -> ClaudeResult:
         (cwd / "projects").mkdir(exist_ok=True)
         (cwd / "projects" / "project-a").mkdir(exist_ok=True)
-        (cwd / "projects" / "project-a" / "bad.md").write_text(
-            "no frontmatter\n", encoding="utf-8"
-        )
+        (cwd / "projects" / "project-a" / "bad.md").write_text("no frontmatter\n", encoding="utf-8")
         return _success_result()
 
     runner = _make_runner(side_effects=[write_bad_page])
@@ -671,3 +668,22 @@ def test_bootstrap_reverts_claude_changes_on_runner_failure(tmp_path: Path) -> N
 
     assert 1 in outcome.stages_failed
     assert not (wiki / "claude_new.md").exists()
+
+
+def test_bootstrap_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner()
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    run_bootstrap(
+        repo_cfg=_repo_cfg(budget_usd=1.25),
+        config=_config(budget_usd=0.5),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+    )
+
+    assert len(runner.calls) == 1
+    assert runner.extra_kwargs == [{}]

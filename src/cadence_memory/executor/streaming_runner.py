@@ -59,14 +59,12 @@ class StreamingClaudeRunner:
         model: str,
         cwd: Path | None = None,
         allowed_tools: tuple[str, ...] = (),
-        budget_usd: float | None = None,
         extra_args: tuple[str, ...] = (),
         idle_timeout_s: float = 300.0,
     ) -> RunResult:
         argv = self._build_argv(
             model=model,
             allowed_tools=allowed_tools,
-            budget_usd=budget_usd,
             extra_args=extra_args,
         )
         env = self._build_env()
@@ -165,7 +163,6 @@ class StreamingClaudeRunner:
         *,
         model: str,
         allowed_tools: tuple[str, ...],
-        budget_usd: float | None,
         extra_args: tuple[str, ...],
     ) -> list[str]:
         argv: list[str] = [
@@ -179,8 +176,6 @@ class StreamingClaudeRunner:
             "--model",
             model,
         ]
-        if budget_usd is not None:
-            argv.extend(["--max-budget-usd", f"{budget_usd}"])
         if allowed_tools:
             argv.extend(["--allowedTools", ",".join(allowed_tools)])
         argv.extend(extra_args)

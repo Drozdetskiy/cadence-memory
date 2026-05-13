@@ -5,9 +5,6 @@
 # Default Claude model used for every LLM call. Overridable per-repo.
 model: claude-sonnet-4-6
 
-# Default per-call budget in USD. The worker passes --max-budget-usd to Claude.
-budget_usd: 0.50
-
 # Idle watchdog timeout for a single Claude call, in seconds.
 idle_timeout_s: 300
 
@@ -40,7 +37,6 @@ repos: []
 #    # Optional per-repo overrides:
 #    # start_commit: abc1234
 #    # model: claude-opus-4-7
-#    # budget_usd: 1.00
 #    # exclude:
 #    #   - "**/*.lock"
 #    #   - "node_modules/**"

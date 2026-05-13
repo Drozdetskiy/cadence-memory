@@ -90,7 +90,6 @@ def _init_wiki(tmp_path: Path) -> Path:
 class _RunCall:
     prompt: str
     model: str
-    budget_usd: float | None
     allowed_tools: tuple[str, ...]
     idle_timeout_s: int
     cwd: Path | None
@@ -116,7 +115,6 @@ class _FakeClaudeRunner:
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
@@ -125,7 +123,6 @@ class _FakeClaudeRunner:
             _RunCall(
                 prompt=prompt,
                 model=model,
-                budget_usd=budget_usd,
                 allowed_tools=allowed_tools,
                 idle_timeout_s=idle_timeout_s,
                 cwd=cwd,
@@ -519,32 +516,11 @@ def test_run_dry_run_plan_format(tmp_path: Path) -> None:
     assert lines[0] == "plan:"
     assert lines[-1].startswith("total:")
     assert "model=claude-sonnet-4-6" in lines[-1]
-    assert "budget=$0.50/call" in lines[-1]
+    assert "budget" not in lines[-1]
     event_line = next(line for line in lines if "[single]" in line)
     truncated = "x" * 72
     assert truncated in event_line
     assert ("x" * 73) not in event_line
-
-
-def test_run_dry_run_budget_unset(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    cache = _FakeGitCache()
-    runner = _FakeClaudeRunner()
-    config = _config(repos=(_repo_cfg(),), budget_usd=None)
-    out = io.StringIO()
-
-    run_pending(
-        wiki_dir=wiki,
-        config=config,
-        state=WorkerState(),
-        cache=cache,
-        runner=runner,
-        dry_run=True,
-        clock=_fixed_clock(),
-        out=out,
-    )
-
-    assert "budget=unset" in out.getvalue()
 
 
 def test_run_persists_state_after_each_event(tmp_path: Path) -> None:
@@ -1011,3 +987,25 @@ def test_run_returns_runsummary_dataclass(tmp_path: Path) -> None:
     assert summary.events_processed == 0
     assert summary.events_failed == 0
     assert summary.cost_usd_total == 0.0
+
+
+def test_dry_run_budget_usd_in_config_does_not_appear_in_summary(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    commits = (_commit("a" * 40, "feat: one"),)
+    cache = _FakeGitCache(commits_by_repo={"project-a": commits})
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),), budget_usd=0.5)
+    out = io.StringIO()
+
+    run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        dry_run=True,
+        clock=_fixed_clock(),
+        out=out,
+    )
+
+    assert "budget" not in out.getvalue()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import stat
 import subprocess
 from datetime import date
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -160,6 +161,12 @@ def test_scaffold_preserves_foreign_post_commit_hook(tmp_path: Path) -> None:
     hook_path = hook_file.resolve()
     assert hook_path in set(result.skipped_files)
     assert hook_path not in set(result.created_files)
+
+
+def test_wiki_config_template_has_no_budget_usd() -> None:
+    template = files("cadence_memory.defaults") / "wiki" / "config.yaml"
+    content = template.read_text(encoding="utf-8")
+    assert "budget_usd" not in content
 
 
 def test_atomic_write_failure_cleans_up_tmp(

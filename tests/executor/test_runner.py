@@ -21,28 +21,28 @@ class FakeStreamingRunner(StreamingClaudeRunner):
         self.captured_model: str | None = None
         self.captured_cwd: Path | None = None
         self.captured_allowed_tools: tuple[str, ...] | None = None
-        self.captured_budget_usd: float | None = None
         self.captured_extra_args: tuple[str, ...] | None = None
         self.captured_idle_timeout_s: float | None = None
+        self.captured_extra_kwargs: dict[str, object] = {}
 
-    def run(
+    def run(  # type: ignore[override]
         self,
         prompt: str,
         *,
         model: str,
         cwd: Path | None = None,
         allowed_tools: tuple[str, ...] = (),
-        budget_usd: float | None = None,
         extra_args: tuple[str, ...] = (),
         idle_timeout_s: float = 300.0,
+        **extra: object,
     ) -> RunResult:
         self.captured_prompt = prompt
         self.captured_model = model
         self.captured_cwd = cwd
         self.captured_allowed_tools = allowed_tools
-        self.captured_budget_usd = budget_usd
         self.captured_extra_args = extra_args
         self.captured_idle_timeout_s = idle_timeout_s
+        self.captured_extra_kwargs = dict(extra)
         return self._result
 
 
@@ -71,28 +71,25 @@ def test_default_runner_passes_no_extra_args() -> None:
     runner.run(
         prompt="hi",
         model="claude-opus-4-7",
-        budget_usd=None,
         allowed_tools=(),
         idle_timeout_s=300,
     )
     assert fake.captured_extra_args == ()
 
 
-def test_default_runner_propagates_budget_model_tools_cwd() -> None:
+def test_default_runner_propagates_model_tools_cwd() -> None:
     fake = FakeStreamingRunner(_ok_result())
     runner = DefaultClaudeRunner(streaming=fake)
     cwd = Path("/some/wiki")
     runner.run(
         prompt="do work",
         model="claude-sonnet-4-6",
-        budget_usd=2.5,
         allowed_tools=("Read", "Write"),
         idle_timeout_s=120,
         cwd=cwd,
     )
     assert fake.captured_prompt == "do work"
     assert fake.captured_model == "claude-sonnet-4-6"
-    assert fake.captured_budget_usd == 2.5
     assert fake.captured_allowed_tools == ("Read", "Write")
     assert fake.captured_cwd == cwd
     assert fake.captured_idle_timeout_s == 120
@@ -114,7 +111,6 @@ def test_default_runner_success_on_exit_zero() -> None:
     result = runner.run(
         prompt="p",
         model="m",
-        budget_usd=None,
         allowed_tools=(),
         idle_timeout_s=300,
     )
@@ -134,7 +130,6 @@ def test_default_runner_preserves_error_on_zero_exit() -> None:
     result = runner.run(
         prompt="p",
         model="m",
-        budget_usd=None,
         allowed_tools=(),
         idle_timeout_s=300,
     )
@@ -158,7 +153,6 @@ def test_default_runner_failure_on_nonzero_exit() -> None:
     result = runner.run(
         prompt="p",
         model="m",
-        budget_usd=None,
         allowed_tools=(),
         idle_timeout_s=300,
     )
@@ -179,7 +173,6 @@ def test_default_runner_tool_call_count_matches_streaming() -> None:
     result = runner.run(
         prompt="p",
         model="m",
-        budget_usd=None,
         allowed_tools=(),
         idle_timeout_s=300,
     )
@@ -202,3 +195,15 @@ def test_default_runner_satisfies_protocol() -> None:
     assert list(protocol_params) == list(impl_params)
     for name, protocol_param in protocol_params.items():
         assert impl_params[name].kind == protocol_param.kind
+
+
+def test_default_runner_does_not_forward_budget_usd() -> None:
+    fake = FakeStreamingRunner(_ok_result())
+    runner = DefaultClaudeRunner(streaming=fake)
+    runner.run(
+        prompt="p",
+        model="m",
+        allowed_tools=(),
+        idle_timeout_s=300,
+    )
+    assert "budget_usd" not in fake.captured_extra_kwargs

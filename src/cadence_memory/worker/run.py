@@ -60,12 +60,6 @@ def _event_tag(event: IngestEvent) -> str:
             return f"[noise:{len(nb.commits)}]"
 
 
-def _format_budget(budget_usd: float | None) -> str:
-    if budget_usd is None:
-        return "unset"
-    return f"${budget_usd:.2f}/call"
-
-
 def run_pending(
     *,
     wiki_dir: Path,
@@ -214,8 +208,7 @@ def run_pending(
                 break
 
     if dry_run:
-        budget = _format_budget(config.budget_usd)
-        out.write(f"total: {total_emitted} events, model={config.model}, budget={budget}\n")
+        out.write(f"total: {total_emitted} events, model={config.model}\n")
 
     summary = RunSummary(
         repos=tuple(visited_repos),

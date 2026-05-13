@@ -25,7 +25,6 @@ class ClaudeRunner(Protocol):
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
@@ -45,7 +44,6 @@ class DefaultClaudeRunner:
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
@@ -55,7 +53,6 @@ class DefaultClaudeRunner:
             model=model,
             cwd=cwd,
             allowed_tools=allowed_tools,
-            budget_usd=budget_usd,
             extra_args=(),
             idle_timeout_s=idle_timeout_s,
         )

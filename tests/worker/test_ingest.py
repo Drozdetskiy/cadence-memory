@@ -26,7 +26,6 @@ from cadence_memory.worker.ingest import (
 class _RunCall:
     prompt: str
     model: str
-    budget_usd: float | None
     allowed_tools: tuple[str, ...]
     idle_timeout_s: int
     cwd: Path | None
@@ -48,27 +47,28 @@ class _FakeClaudeRunner:
         )
     )
     calls: list[_RunCall] = field(default_factory=list)
+    extra_kwargs: list[dict[str, object]] = field(default_factory=list)
 
     def run(
         self,
         *,
         prompt: str,
         model: str,
-        budget_usd: float | None,
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        **extra: object,
     ) -> ClaudeResult:
         self.calls.append(
             _RunCall(
                 prompt=prompt,
                 model=model,
-                budget_usd=budget_usd,
                 allowed_tools=allowed_tools,
                 idle_timeout_s=idle_timeout_s,
                 cwd=cwd,
             )
         )
+        self.extra_kwargs.append(dict(extra))
         if self.side_effects:
             side_effect = self.side_effects.pop(0)
             assert cwd is not None
@@ -457,7 +457,7 @@ def test_per_repo_model_override(tmp_path: Path) -> None:
     assert runner.calls[0].allowed_tools == WIKI_READWRITE
 
 
-def test_per_repo_budget_override(tmp_path: Path) -> None:
+def test_budget_usd_in_config_does_not_affect_runner(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     runner = _FakeClaudeRunner()
     cache = _FakeGitCache()
@@ -472,7 +472,8 @@ def test_per_repo_budget_override(tmp_path: Path) -> None:
         clock=_fixed_clock(),
     )
 
-    assert runner.calls[0].budget_usd == 1.25
+    assert len(runner.calls) == 1
+    assert runner.extra_kwargs == [{}]
 
 
 def test_noise_batch_event_uses_aggregated_subject(tmp_path: Path) -> None:

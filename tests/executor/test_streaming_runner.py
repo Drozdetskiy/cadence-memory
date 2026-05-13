@@ -197,18 +197,6 @@ def test_runner_idle_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any(sig == signal.SIGTERM for _, sig in killpg_calls)
 
 
-def test_runner_passes_budget_flag() -> None:
-    fake = FakePopen(returncode=0)
-    runner = _FakeRunner(fake)
-
-    runner.run(prompt="x", model="m", budget_usd=0.50)
-
-    assert runner.captured_argv is not None
-    argv = runner.captured_argv
-    idx = argv.index("--max-budget-usd")
-    assert argv[idx + 1] == "0.5"
-
-
 def test_runner_passes_allowed_tools() -> None:
     fake = FakePopen(returncode=0)
     runner = _FakeRunner(fake)
@@ -221,11 +209,11 @@ def test_runner_passes_allowed_tools() -> None:
     assert argv[idx + 1] == "Read,Write,Edit"
 
 
-def test_runner_omits_budget_when_none() -> None:
+def test_runner_never_passes_max_budget_flag() -> None:
     fake = FakePopen(returncode=0)
     runner = _FakeRunner(fake)
 
-    runner.run(prompt="x", model="m", budget_usd=None)
+    runner.run(prompt="x", model="m", allowed_tools=("Read",), extra_args=("--foo",))
 
     assert runner.captured_argv is not None
     assert "--max-budget-usd" not in runner.captured_argv
@@ -249,7 +237,6 @@ def test_runner_extra_args_appended_last() -> None:
         prompt="x",
         model="m",
         allowed_tools=("Read",),
-        budget_usd=0.5,
         extra_args=("--foo", "bar"),
     )
 

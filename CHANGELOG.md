@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `--max-budget-usd` is no longer passed to the `claude` subprocess. The `budget_usd` config key is now ignored and will be removed in a future release.
+
 ## v0.4.2 — 2026-05-13
 
 ### Fixes
