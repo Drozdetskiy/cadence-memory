@@ -259,7 +259,9 @@ def test_runner_extra_args_appended_last() -> None:
 
 
 def test_runner_filters_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WEIRD_VAR_FOR_TEST", "1")
+    monkeypatch.setenv("WEIRD_VAR_FOR_TEST", "sentinel-value")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_FOO", "bar")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     fake = FakePopen(returncode=0)
     runner = _FakeRunner(fake)
@@ -267,7 +269,13 @@ def test_runner_filters_env(monkeypatch: pytest.MonkeyPatch) -> None:
     runner.run(prompt="x", model="m")
 
     assert runner.captured_env is not None
-    assert "WEIRD_VAR_FOR_TEST" not in runner.captured_env
+    # Deny-list: arbitrary parent vars pass through.
+    assert runner.captured_env.get("WEIRD_VAR_FOR_TEST") == "sentinel-value"
+    # CLAUDE_CODE_* session vars pass through (Claude Code relies on them).
+    assert runner.captured_env.get("CLAUDE_CODE_SESSION_FOO") == "bar"
+    # Only CLAUDECODE is stripped so the child doesn't think it's nested.
+    assert "CLAUDECODE" not in runner.captured_env
+    # ANTHROPIC_API_KEY passes through for CI auth.
     assert runner.captured_env.get("ANTHROPIC_API_KEY") == "sk-test"
 
 
