@@ -137,8 +137,10 @@ my-master-wiki/                       # itself a git repo
   .claude/
     settings.json                     # SessionStart hook, allowed tools
     skills/
-      wiki-researcher.md              # used by /plan and read-side queries
-      wiki-ingest.md                  # used to integrate raw/notes/ manually
+      wiki-researcher/
+        SKILL.md                      # used by /plan and read-side queries
+      wiki-ingest/
+        SKILL.md                      # used to integrate raw/notes/ manually
   index.md                            # full catalog (LLM-maintained)
   log.md                              # append-only chronological audit
   gaps.md                             # open questions and TODOs
@@ -454,7 +456,7 @@ Used to integrate a manual drop. Steps:
 2. Skill calls `cadence-memory ingest <path>`, which renders the same ingest prompt (with the file as the source instead of a commit diff) and runs Claude.
 3. Claude updates pages, index, log; returns a brief summary to chat.
 
-Both skills are shipped under `src/cadence_memory/defaults/skills/` and copied into `<wiki>/.claude/skills/` by `init`.
+Both skills are shipped under `src/cadence_memory/defaults/wiki/.claude/skills/` and copied into `<wiki>/.claude/skills/<name>/SKILL.md` by `init`.
 
 ---
 
