@@ -21,6 +21,10 @@ cadence-memory worker run    # catch up the wiki with all tracked repos
 cadence-memory query <text>  # search the wiki
 ```
 
+## Worker lock
+
+A `cadence-memory worker run` or `worker daemon` invocation acquires a POSIX advisory lock on `<wiki>/.cadence-memory/worker.lock`. The lock file is removed when the worker exits, so do not check for the file's existence to determine whether a worker is running — it will be absent both before the first run and after every clean exit. Shell scripts that need to serialize bootstrap runs across multiple repos should probe liveness with `flock -n <wiki>/.cadence-memory/worker.lock true` (a non-zero exit means a worker currently holds the lock).
+
 ## Design
 
 See [`docs/design2.md`](docs/design2.md) for the full architecture.

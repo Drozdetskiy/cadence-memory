@@ -313,7 +313,7 @@ State is plain JSON, not SQLite — it's small and the user occasionally edits i
 
 ### 6.3 Concurrency & locks
 
-A POSIX file lock on `.cadence-memory/worker.lock` prevents two `worker run` invocations from racing on the same wiki repo. Different wiki repos have different locks.
+A POSIX file lock on `.cadence-memory/worker.lock` prevents two `worker run` invocations from racing on the same wiki repo. Different wiki repos have different locks. The lock file is removed when the worker exits (normal or exception path); only the kernel-side flock — not the file's presence — is the source of truth for `is-busy`. Shell wrappers should test for liveness with `flock -n .cadence-memory/worker.lock true` (succeeds when free, exits non-zero when held), not `test -f`.
 
 ---
 
