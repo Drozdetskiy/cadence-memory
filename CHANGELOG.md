@@ -9,6 +9,7 @@
 - New global CLI flags: `--verbose` / `-v` (level=debug), `--quiet` / `-q` (level=warn), `--no-color` (plain ASCII output).
 
 ### Fixes
+- `cadence-memory worker run` no longer leaves an empty `.cadence-memory/worker.lock` on disk after a normal exit; shell wrappers that gate on `test -f worker.lock` no longer hang.
 - Project skills scaffolded by `cadence-memory init` are now written as `.claude/skills/<name>/SKILL.md` instead of flat `.claude/skills/<name>.md`; Claude Code only discovers the directory layout, so the previously scaffolded skills never loaded.
 
 ### Changed
