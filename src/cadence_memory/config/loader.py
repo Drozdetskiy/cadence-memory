@@ -31,9 +31,7 @@ ALLOWED_WORKER_KEYS = frozenset(
         "stop_on_failure",
     }
 )
-ALLOWED_REPO_KEYS = frozenset(
-    {"name", "url", "branch", "start_commit", "model", "budget_usd"}
-)
+ALLOWED_REPO_KEYS = frozenset({"name", "url", "branch", "start_commit", "model", "budget_usd"})
 
 
 def load_config(path: Path, *, logger: Logger = _NULL_LOGGER) -> Config:

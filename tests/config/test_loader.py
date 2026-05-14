@@ -234,7 +234,6 @@ def test_repos_not_list_errors() -> None:
     assert "list" in exc_info.value.message
 
 
-
 def test_worker_not_mapping_errors() -> None:
     with pytest.raises(ConfigError) as exc_info:
         parse_config({"worker": 42}, path=Path("<test>"))
@@ -360,7 +359,6 @@ def test_worker_stop_on_failure_non_bool_errors() -> None:
     with pytest.raises(ConfigError) as exc_info:
         parse_config({"worker": {"stop_on_failure": 1}}, path=Path("<test>"))
     assert "worker.stop_on_failure" in exc_info.value.message
-
 
 
 def test_unknown_keys_with_mixed_types_warns() -> None:

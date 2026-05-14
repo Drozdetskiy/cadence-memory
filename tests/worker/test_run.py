@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -17,6 +18,7 @@ from cadence_memory.git.cache import CloneResult, CommitInfo
 from cadence_memory.git.errors import GitError, HistoryRewrittenError
 from cadence_memory.git.walker import IngestEvent, NoiseBatchEvent, SingleCommitEvent
 from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent, ProgressEvent
+from cadence_memory.worker.log_rotate import LogRotationError
 from cadence_memory.worker.run import RunSummary, run_pending
 from cadence_memory.worker.state import RepoState, WorkerState
 
@@ -1066,3 +1068,123 @@ def test_run_emits_phase_start_end_events_per_repo(tmp_path: Path) -> None:
     assert len(starts) == 1
     assert starts[0].repo == "project-a"
     assert len(ends) == 1
+
+
+def _seed_big_log(wiki: Path, months: list[tuple[str, int]]) -> None:
+    frontmatter = (
+        "---\n"
+        'title: "Activity Log"\n'
+        "type: log\n"
+        "project: _master\n"
+        "created: 2026-03-01\n"
+        "updated: 2026-05-12\n"
+        "tags: []\n"
+        "confidence: high\n"
+        "---\n"
+        "\n"
+    )
+    body_parts: list[str] = []
+    for ym, count in months:
+        year, month_str = ym.split("-")
+        for i in range(count):
+            day = (i % 28) + 1
+            body_parts.append(f"## [{year}-{month_str}-{day:02d}] entry {i}\n\nContent {i}.\n")
+    (wiki / "log.md").write_text(frontmatter + "".join(body_parts), encoding="utf-8")
+    _git("add", "log.md", cwd=wiki)
+    _git("commit", "-m", "seed big log", cwd=wiki)
+
+
+def test_run_pending_calls_rotate_log(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    _seed_big_log(wiki, [("2026-03", 50), ("2026-04", 50), ("2026-05", 100)])
+    cache = _FakeGitCache()
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),))
+
+    _state, _summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert runner.calls == []
+    assert (wiki / "log" / "2026-03.md").exists()
+    log_text = (wiki / "log.md").read_text(encoding="utf-8")
+    retained = [ln for ln in log_text.splitlines() if ln.startswith("## [")]
+    assert len(retained) == 150
+    git_log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=wiki,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    assert "chore: rotate log.md (2026-03 archive)" in git_log
+
+
+def test_run_pending_swallows_rotation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _init_wiki(tmp_path)
+    cache = _FakeGitCache()
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),))
+    recording = _RecordingLogger()
+
+    def fake_rotate(**_kwargs: object) -> NoReturn:
+        raise LogRotationError("simulated rotation failure")
+
+    monkeypatch.setattr("cadence_memory.worker.run.rotate_log", fake_rotate)
+
+    _state, summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert isinstance(summary, RunSummary)
+    combined = " ".join(recording.messages)
+    assert "log rotation failed" in combined
+    assert "simulated rotation failure" in combined
+
+
+def test_run_pending_dry_run_does_not_commit_rotation(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    _seed_big_log(wiki, [("2026-03", 50), ("2026-04", 50), ("2026-05", 100)])
+    initial_log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=wiki,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    cache = _FakeGitCache()
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),))
+
+    _state, _summary = run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        dry_run=True,
+        clock=_fixed_clock(),
+    )
+
+    after_log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=wiki,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    assert initial_log == after_log
+    assert not (wiki / "log").exists()
