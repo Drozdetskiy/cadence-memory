@@ -1,4 +1,14 @@
+# cadence-memory worker artifacts
 .cadence-memory/git_cache/
 .cadence-memory/state.json
 .cadence-memory/worker.lock
 *.tmp
+
+# OS / editor junk
+.DS_Store
+
+# per-machine Claude Code state (must not be shared)
+.claude/settings.local.json
+
+# manual drop-zone — folded into structured pages via `cadence-memory ingest`
+raw/notes/

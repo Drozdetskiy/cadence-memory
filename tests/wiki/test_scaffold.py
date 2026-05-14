@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import stat
 import subprocess
 from datetime import date
@@ -161,6 +162,103 @@ def test_scaffold_preserves_foreign_post_commit_hook(tmp_path: Path) -> None:
     hook_path = hook_file.resolve()
     assert hook_path in set(result.skipped_files)
     assert hook_path not in set(result.created_files)
+
+
+_EXPECTED_GITIGNORE_ENTRIES: tuple[str, ...] = (
+    ".cadence-memory/git_cache/",
+    ".cadence-memory/state.json",
+    ".cadence-memory/worker.lock",
+    "*.tmp",
+    ".DS_Store",
+    ".claude/settings.local.json",
+    "raw/notes/",
+)
+
+
+def test_scaffolded_gitignore_contains_expected_entries(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+
+    lines = {
+        line.strip()
+        for line in (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    for entry in _EXPECTED_GITIGNORE_ENTRIES:
+        assert entry in lines, f"missing gitignore entry: {entry}"
+
+
+def test_scaffolded_gitignore_idempotent_content(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+    first = (tmp_path / ".gitignore").read_bytes()
+
+    scaffold_wiki(tmp_path)
+    second = (tmp_path / ".gitignore").read_bytes()
+
+    assert first == second
+
+
+def _query_protocol_section(claudemd_text: str) -> str:
+    lines = claudemd_text.splitlines()
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if line.strip() == "## Query protocol":
+            start = i + 1
+            break
+    assert start is not None, "## Query protocol heading not found"
+    end = len(lines)
+    for j in range(start, len(lines)):
+        if lines[j].startswith("## "):
+            end = j
+            break
+    return "\n".join(lines[start:end])
+
+
+def test_scaffolded_claudemd_query_protocol_has_five_steps(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+    section = _query_protocol_section(text)
+    items = re.findall(r"^\d+\. ", section, flags=re.MULTILINE)
+    assert len(items) == 5, f"expected 5 numbered steps, got {len(items)}: {items}"
+
+
+def test_scaffolded_claudemd_mentions_wiki_researcher(tmp_path: Path) -> None:
+    scaffold_wiki(tmp_path)
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+    section = _query_protocol_section(text)
+    assert "wiki-researcher" in section
+    normalized = re.sub(r"\s+", " ", section).lower()
+    assert "in parallel" in normalized
+
+
+def test_scaffolded_index_raw_notes_phrasing_matches_gitignore_policy(
+    tmp_path: Path,
+) -> None:
+    scaffold_wiki(tmp_path)
+    text = (tmp_path / "index.md").read_text(encoding="utf-8")
+
+    lines = text.splitlines()
+    bullet_idx: int | None = None
+    for i, line in enumerate(lines):
+        if line.startswith("- `raw/notes/`"):
+            bullet_idx = i
+            break
+    assert bullet_idx is not None, "raw/notes/ bullet not found in index.md"
+
+    end = len(lines)
+    for j in range(bullet_idx + 1, len(lines)):
+        stripped = lines[j].lstrip()
+        if not lines[j].strip():
+            end = j
+            break
+        if stripped.startswith("- ") or stripped.startswith("#"):
+            end = j
+            break
+    bullet_block = "\n".join(lines[bullet_idx:end])
+
+    assert "paste manually-curated notes" not in bullet_block
+    assert "Not committed" in bullet_block
 
 
 def test_wiki_config_template_has_no_budget_usd() -> None:

@@ -25,4 +25,6 @@ _No projects tracked yet._ Add a repo via `cadence-memory repos add <name> <url>
 
 ## Raw drop-zone
 
-- `raw/notes/` — paste manually-curated notes, articles, or meeting minutes here, then run `cadence-memory ingest raw/notes/<file>` to fold them into the wiki.
+- `raw/notes/` — local drop-zone for articles, meeting notes, or drafts.
+  Not committed by default; run `cadence-memory ingest raw/notes/<file>` to
+  fold its contents into structured wiki pages.
