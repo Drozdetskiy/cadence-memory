@@ -305,9 +305,7 @@ def test_cli_ingest_phase_header_and_summary_present(
     assert "$0.07" in result.stdout
 
 
-def test_cli_ingest_no_color_strips_ansi(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_ingest_no_color_strips_ansi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wiki = _scaffold_with_color(tmp_path)
     src = _write_source(wiki)
     outcome = _success_outcome(src)
@@ -324,9 +322,7 @@ def test_cli_ingest_no_color_strips_ansi(
     assert "ok:" in result_plain.stdout
 
 
-def test_cli_ingest_quiet_suppresses_info(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_ingest_quiet_suppresses_info(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wiki = _scaffold(tmp_path)
     src = _write_source(wiki)
     outcome = _success_outcome(src)

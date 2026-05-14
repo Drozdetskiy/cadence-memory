@@ -181,9 +181,7 @@ def test_cli_daemon_phase_header_present(tmp_path: Path, monkeypatch: pytest.Mon
     assert "starting daemon" in result.stdout
 
 
-def test_cli_daemon_no_color_strips_ansi(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_daemon_no_color_strips_ansi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _scaffold_with_color(tmp_path)
 
     def fake_run_daemon(**kwargs: Any) -> None:
@@ -199,9 +197,7 @@ def test_cli_daemon_no_color_strips_ansi(
     assert "\x1b[" not in result_plain.stdout
 
 
-def test_cli_daemon_quiet_suppresses_info(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_daemon_quiet_suppresses_info(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _scaffold(tmp_path)
 
     def fake_run_daemon(**kwargs: Any) -> None:

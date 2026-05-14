@@ -31,9 +31,7 @@ _STAGE_NAMES: dict[int, str] = {
 
 
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, text=True, capture_output=True
-    )
+    return subprocess.run(["git", *args], cwd=cwd, check=True, text=True, capture_output=True)
 
 
 def _init_wiki(tmp_path: Path) -> Path:
@@ -219,9 +217,7 @@ def test_jsonl_sink_produces_valid_records(tmp_path: Path) -> None:
         assert "ts" in obj, f"Missing 'ts' field in: {line}"
 
 
-def test_non_tty_stdout_has_no_ansi(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_non_tty_stdout_has_no_ansi(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """StdoutLogger with color='auto' emits no ANSI codes when stdout is not a tty."""
     wiki = _init_wiki(tmp_path)
     repo_path = tmp_path / "repo"

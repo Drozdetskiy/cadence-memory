@@ -21,6 +21,7 @@ from cadence_memory.git.walker import (
 from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent
 from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.ingest import ingest_event
+from cadence_memory.worker.log_rotate import LogRotationError, RotateOutcome, rotate_log
 from cadence_memory.worker.state import (
     RepoState,
     WorkerState,
@@ -87,6 +88,19 @@ def run_pending(
 
     if dry_run:
         logger.info("plan:")
+
+    try:
+        rot: RotateOutcome = rotate_log(
+            wiki_dir=wiki_dir, dry_run=dry_run, logger=logger, clock=clock
+        )
+        if rot.rotated:
+            logger.info(
+                "log rotated: archived %d entries to %s",
+                rot.archived_entries,
+                ", ".join(str(p.relative_to(wiki_dir)) for p in rot.archive_files),
+            )
+    except LogRotationError as exc:
+        logger.warn("log rotation failed: %s; continuing with ingest", exc)
 
     per_repo_cap = config.worker.max_commits_per_run
 

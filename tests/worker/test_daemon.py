@@ -420,9 +420,7 @@ def test_daemon_swallows_unexpected_exception(
 
     assert len(fake.calls) == 2
     err_events = [
-        e
-        for e in recording.events
-        if isinstance(e, ErrorEvent) and e.phase == "daemon-tick"
+        e for e in recording.events if isinstance(e, ErrorEvent) and e.phase == "daemon-tick"
     ]
     assert len(err_events) == 1
     assert "unexpected error" in err_events[0].message

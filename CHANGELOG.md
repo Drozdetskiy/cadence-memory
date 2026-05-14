@@ -3,6 +3,7 @@
 ## v0.4.4 — unreleased
 
 ### New
+- Automatic monthly rotation of `log.md` once it exceeds 100 entries; older months are archived to `log/YYYY-MM.md`. New `cadence-memory log rotate` command for manual triggering (with `--dry-run`).
 - Every command (`bootstrap`, `worker run`, `worker daemon`, `ingest`, `lint`) now streams progress events to stdout in real time: timestamped phase/stage/ingest start and end events, plus tool-call and signal markers from the Claude subprocess.
 - Optional structured JSONL sink: set `progress.jsonl: true` in config to append one JSON record per event to `progress.jsonl_path`.
 - New global CLI flags: `--verbose` / `-v` (level=debug), `--quiet` / `-q` (level=warn), `--no-color` (plain ASCII output).
