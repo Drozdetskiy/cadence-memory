@@ -67,8 +67,12 @@ When asked about this wiki's contents:
 1. Read `index.md` (head) and `log.md` (tail) for the catalog and recent activity.
 2. Search via the `qmd` MCP if available, otherwise `cadence-memory query <text>`
    or `rg --type md`.
-3. Read the most relevant pages in full before answering.
-4. If pages contradict each other, surface the contradiction explicitly and
+3. For substantive questions about wiki contents (architecture, "how does X
+   work", "why was Y decided"), invoke the `wiki-researcher` skill **in
+   parallel with** `rg`/`qmd` — not instead. Skip for trivial "where is
+   file X" lookups.
+4. Read the most relevant pages in full before answering.
+5. If pages contradict each other, surface the contradiction explicitly and
    add an entry to `gaps.md` rather than silently picking one.
 
 ## Maintenance
