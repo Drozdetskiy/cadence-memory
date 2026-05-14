@@ -36,7 +36,6 @@ class RepoConfig:
     start_commit: str | None = None
     model: str | None = None
     budget_usd: float | None = None
-    exclude: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,5 +47,4 @@ class Config:
     idle_timeout_s: int = 300
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     repos: tuple[RepoConfig, ...] = ()
-    raw_auto_ingest: bool = False
     progress: ProgressConfig = field(default_factory=ProgressConfig)

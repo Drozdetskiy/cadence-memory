@@ -10,11 +10,14 @@ import yaml
 
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.schema import Config, ProgressConfig, RepoConfig, WorkerConfig
+from cadence_memory.progress.logger import Logger, NullLogger
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+_NULL_LOGGER: Logger = NullLogger()
+
 ALLOWED_TOP_KEYS = frozenset(
-    {"model", "budget_usd", "idle_timeout_s", "worker", "repos", "raw_auto_ingest", "progress"}
+    {"model", "budget_usd", "idle_timeout_s", "worker", "repos", "progress"}
 )
 ALLOWED_PROGRESS_KEYS = frozenset({"jsonl", "jsonl_path", "color", "level"})
 _VALID_COLORS = frozenset({"auto", "always", "never"})
@@ -29,11 +32,11 @@ ALLOWED_WORKER_KEYS = frozenset(
     }
 )
 ALLOWED_REPO_KEYS = frozenset(
-    {"name", "url", "branch", "start_commit", "model", "budget_usd", "exclude"}
+    {"name", "url", "branch", "start_commit", "model", "budget_usd"}
 )
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path, *, logger: Logger = _NULL_LOGGER) -> Config:
     """Read and parse a config file. Raises `ConfigError` on any problem."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -48,22 +51,21 @@ def load_config(path: Path) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(path, "top-level must be a mapping")
     data = cast(dict[str, object], raw)
-    return parse_config(data, path=path)
+    return parse_config(data, path=path, logger=logger)
 
 
-def parse_config(data: dict[str, object], *, path: Path) -> Config:
+def parse_config(data: dict[str, object], *, path: Path, logger: Logger = _NULL_LOGGER) -> Config:
     """Validate an already-parsed mapping and build a `Config`."""
     unknown = set(data) - ALLOWED_TOP_KEYS
-    if unknown:
-        raise ConfigError(path, f"unknown key(s): {sorted(unknown, key=str)}")
+    for key in sorted(unknown, key=str):
+        logger.warn("%s: unknown key %r (ignored)", str(path), key)
 
     model = _require_nonempty_str(data.get("model", "claude-sonnet-4-6"), "model", path)
     budget_usd = _parse_optional_budget(data.get("budget_usd", 0.50), "budget_usd", path)
     idle_timeout_s = _require_positive_int(data.get("idle_timeout_s", 300), "idle_timeout_s", path)
-    raw_auto_ingest = _require_bool(data.get("raw_auto_ingest", False), "raw_auto_ingest", path)
-    worker = _parse_worker(data.get("worker"), path)
-    repos = _parse_repos(data.get("repos"), path)
-    progress = _parse_progress(data.get("progress"), path)
+    worker = _parse_worker(data.get("worker"), path, logger=logger)
+    repos = _parse_repos(data.get("repos"), path, logger=logger)
+    progress = _parse_progress(data.get("progress"), path, logger=logger)
 
     return Config(
         model=model,
@@ -71,20 +73,19 @@ def parse_config(data: dict[str, object], *, path: Path) -> Config:
         idle_timeout_s=idle_timeout_s,
         worker=worker,
         repos=repos,
-        raw_auto_ingest=raw_auto_ingest,
         progress=progress,
     )
 
 
-def _parse_progress(value: object, path: Path) -> ProgressConfig:
+def _parse_progress(value: object, path: Path, *, logger: Logger = _NULL_LOGGER) -> ProgressConfig:
     if value is None:
         return ProgressConfig()
     if not isinstance(value, dict):
         raise ConfigError(path, "progress: must be a mapping")
     pdata = cast(dict[str, object], value)
     unknown = set(pdata) - ALLOWED_PROGRESS_KEYS
-    if unknown:
-        raise ConfigError(path, f"progress: unknown key(s): {sorted(unknown, key=str)}")
+    for key in sorted(unknown, key=str):
+        logger.warn("%s: progress: unknown key %r (ignored)", str(path), key)
 
     jsonl_raw = pdata.get("jsonl", False)
     if not isinstance(jsonl_raw, bool):
@@ -110,15 +111,15 @@ def _parse_progress(value: object, path: Path) -> ProgressConfig:
     )
 
 
-def _parse_worker(value: object, path: Path) -> WorkerConfig:
+def _parse_worker(value: object, path: Path, *, logger: Logger = _NULL_LOGGER) -> WorkerConfig:
     if value is None:
         return WorkerConfig()
     if not isinstance(value, dict):
         raise ConfigError(path, "worker: must be a mapping")
     wdata = cast(dict[str, object], value)
     unknown = set(wdata) - ALLOWED_WORKER_KEYS
-    if unknown:
-        raise ConfigError(path, f"worker: unknown key(s): {sorted(unknown, key=str)}")
+    for key in sorted(unknown, key=str):
+        logger.warn("%s: worker: unknown key %r (ignored)", str(path), key)
 
     poll_interval_s = _require_positive_int(
         wdata.get("poll_interval_s", 3600), "worker.poll_interval_s", path
@@ -148,7 +149,9 @@ def _parse_worker(value: object, path: Path) -> WorkerConfig:
     )
 
 
-def _parse_repos(value: object, path: Path) -> tuple[RepoConfig, ...]:
+def _parse_repos(
+    value: object, path: Path, *, logger: Logger = _NULL_LOGGER
+) -> tuple[RepoConfig, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -158,7 +161,7 @@ def _parse_repos(value: object, path: Path) -> tuple[RepoConfig, ...]:
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
             raise ConfigError(path, f"repos[{i}]: must be a mapping")
-        repo = _parse_repo(cast(dict[str, object], entry), i, path)
+        repo = _parse_repo(cast(dict[str, object], entry), i, path, logger=logger)
         if repo.name in seen:
             raise ConfigError(path, f"repos[{i}].name: duplicate name {repo.name!r}")
         seen.add(repo.name)
@@ -166,10 +169,12 @@ def _parse_repos(value: object, path: Path) -> tuple[RepoConfig, ...]:
     return tuple(out)
 
 
-def _parse_repo(entry: dict[str, object], i: int, path: Path) -> RepoConfig:
+def _parse_repo(
+    entry: dict[str, object], i: int, path: Path, *, logger: Logger = _NULL_LOGGER
+) -> RepoConfig:
     unknown = set(entry) - ALLOWED_REPO_KEYS
-    if unknown:
-        raise ConfigError(path, f"repos[{i}]: unknown key(s): {sorted(unknown, key=str)}")
+    for key in sorted(unknown, key=str):
+        logger.warn("%s: repos[%d]: unknown key %r (ignored)", str(path), i, key)
 
     if "name" not in entry:
         raise ConfigError(path, f"repos[{i}].name: missing required field")
@@ -194,7 +199,6 @@ def _parse_repo(entry: dict[str, object], i: int, path: Path) -> RepoConfig:
     )
     model = _parse_optional_nonempty_str(entry.get("model"), f"repos[{i}].model", path)
     budget_usd = _parse_optional_budget(entry.get("budget_usd"), f"repos[{i}].budget_usd", path)
-    exclude = _parse_str_list(entry.get("exclude", []), f"repos[{i}].exclude", path)
 
     return RepoConfig(
         name=name_raw,
@@ -203,7 +207,6 @@ def _parse_repo(entry: dict[str, object], i: int, path: Path) -> RepoConfig:
         start_commit=start_commit,
         model=model,
         budget_usd=budget_usd,
-        exclude=exclude,
     )
 
 

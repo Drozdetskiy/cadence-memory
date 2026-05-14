@@ -62,6 +62,7 @@ def cmd_add(
             start_commit=start_commit,
             model=model,
             budget_usd=budget,
+            logger=logger,
         )
     except (ConfigError, WikiNotFoundError) as exc:
         logger.error("%s", str(exc))
@@ -87,7 +88,11 @@ def cmd_list(
         raise typer.Exit(code=1)
     try:
         config_path = _resolve_config_path(wiki)
-        rendered = list_repos(config_path, format="json" if format == "json" else "table")
+        rendered = list_repos(
+            config_path,
+            format="json" if format == "json" else "table",
+            logger=logger,
+        )
     except (ConfigError, WikiNotFoundError) as exc:
         logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
@@ -107,7 +112,7 @@ def cmd_remove(
     logger: Logger = make_logger(None, get_overrides(ctx))
     try:
         config_path = _resolve_config_path(wiki)
-        remove_repo(config_path, name=name)
+        remove_repo(config_path, name=name, logger=logger)
     except (ConfigError, WikiNotFoundError) as exc:
         logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
