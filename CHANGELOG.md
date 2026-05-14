@@ -7,6 +7,9 @@
 - Optional structured JSONL sink: set `progress.jsonl: true` in config to append one JSON record per event to `progress.jsonl_path`.
 - New global CLI flags: `--verbose` / `-v` (level=debug), `--quiet` / `-q` (level=warn), `--no-color` (plain ASCII output).
 
+### Fixes
+- Project skills scaffolded by `cadence-memory init` are now written as `.claude/skills/<name>/SKILL.md` instead of flat `.claude/skills/<name>.md`; Claude Code only discovers the directory layout, so the previously scaffolded skills never loaded.
+
 ### Changed
 - The YAML loader now warns on unknown keys instead of raising `ConfigError`. Malformed values on *known* keys still error. This makes schema removals non-breaking and surfaces typos as warnings.
 

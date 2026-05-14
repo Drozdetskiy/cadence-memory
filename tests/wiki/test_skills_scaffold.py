@@ -9,8 +9,8 @@ import yaml
 from cadence_memory.wiki import scaffold_wiki
 
 _SKILL_PATHS: tuple[str, ...] = (
-    ".claude/skills/wiki-researcher.md",
-    ".claude/skills/wiki-ingest.md",
+    ".claude/skills/wiki-researcher/SKILL.md",
+    ".claude/skills/wiki-ingest/SKILL.md",
 )
 
 
@@ -19,6 +19,11 @@ def test_init_copies_skills(tmp_path: Path) -> None:
 
     for rel in _SKILL_PATHS:
         assert (tmp_path / rel).is_file(), f"missing {rel}"
+
+    # Legacy flat files must NOT exist after a fresh scaffold (regression guard).
+    for name in ("wiki-ingest", "wiki-researcher"):
+        flat = tmp_path / ".claude" / "skills" / f"{name}.md"
+        assert not flat.exists(), f"legacy flat file should not exist: {flat}"
 
 
 def test_skill_frontmatter_has_required_fields(tmp_path: Path) -> None:
@@ -36,12 +41,14 @@ def test_skill_frontmatter_has_required_fields(tmp_path: Path) -> None:
         assert isinstance(fm.get("description"), str) and fm["description"], (
             f"{rel}: missing description"
         )
-        assert fm["name"] == path.stem, f"{rel}: name '{fm['name']}' != stem '{path.stem}'"
+        assert fm["name"] == path.parent.name, (
+            f"{rel}: name '{fm['name']}' != dir '{path.parent.name}'"
+        )
 
 
 def test_idempotent_skills_copy(tmp_path: Path) -> None:
     custom = b"# hand-edited skill\n"
-    skill_path = tmp_path / ".claude" / "skills" / "wiki-researcher.md"
+    skill_path = tmp_path / ".claude" / "skills" / "wiki-researcher" / "SKILL.md"
     skill_path.parent.mkdir(parents=True, exist_ok=True)
     skill_path.write_bytes(custom)
 
