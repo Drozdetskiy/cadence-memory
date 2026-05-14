@@ -15,6 +15,9 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import SLUG_RE, load_config, parse_config
+from cadence_memory.progress.logger import Logger, NullLogger
+
+_NULL_LOGGER: Logger = NullLogger()
 
 REPO_KEY_ORDER: tuple[str, ...] = (
     "name",
@@ -23,7 +26,6 @@ REPO_KEY_ORDER: tuple[str, ...] = (
     "start_commit",
     "model",
     "budget_usd",
-    "exclude",
 )
 
 
@@ -117,6 +119,7 @@ def add_repo(
     start_commit: str | None = None,
     model: str | None = None,
     budget_usd: float | None = None,
+    logger: Logger = _NULL_LOGGER,
 ) -> None:
     """Append a new repo entry to `config.yaml` in-place.
 
@@ -125,7 +128,7 @@ def add_repo(
     keys, comments, and quoting survive untouched. After the write a second
     strict load verifies invariants.
     """
-    config = load_config(config_path)
+    config = load_config(config_path, logger=logger)
     if not SLUG_RE.match(name):
         raise ConfigError(config_path, f"name: not a valid slug ({name!r})")
     if any(r.name == name for r in config.repos):
@@ -152,9 +155,9 @@ def add_repo(
     load_config(config_path)
 
 
-def remove_repo(config_path: Path, *, name: str) -> None:
+def remove_repo(config_path: Path, *, name: str, logger: Logger = _NULL_LOGGER) -> None:
     """Remove the repo named `name` from `config.yaml` in-place."""
-    load_config(config_path)
+    load_config(config_path, logger=logger)
     doc = load_yaml_roundtrip(config_path)
     repos = doc.get("repos") if isinstance(doc, CommentedMap) else None
     if repos is None:
@@ -171,9 +174,14 @@ def remove_repo(config_path: Path, *, name: str) -> None:
     load_config(config_path)
 
 
-def list_repos(config_path: Path, *, format: Literal["table", "json"] = "table") -> str:
+def list_repos(
+    config_path: Path,
+    *,
+    format: Literal["table", "json"] = "table",
+    logger: Logger = _NULL_LOGGER,
+) -> str:
     """Render the current `repos[]` as a table or JSON string."""
-    config = load_config(config_path)
+    config = load_config(config_path, logger=logger)
     if format == "json":
         return json.dumps([dataclasses.asdict(r) for r in config.repos], indent=2)
     if format == "table":

@@ -7,6 +7,12 @@
 - Optional structured JSONL sink: set `progress.jsonl: true` in config to append one JSON record per event to `progress.jsonl_path`.
 - New global CLI flags: `--verbose` / `-v` (level=debug), `--quiet` / `-q` (level=warn), `--no-color` (plain ASCII output).
 
+### Changed
+- The YAML loader now warns on unknown keys instead of raising `ConfigError`. Malformed values on *known* keys still error. This makes schema removals non-breaking and surfaces typos as warnings.
+
+### Removed
+- `RepoConfig.exclude` and `Config.raw_auto_ingest`. Neither was ever read at runtime.
+
 ## v0.4.3 — 2026-05-14
 
 ### Fixes

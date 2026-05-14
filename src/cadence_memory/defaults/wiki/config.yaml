@@ -44,6 +44,3 @@ repos: []
 #    # Optional per-repo overrides:
 #    # start_commit: abc1234
 #    # model: claude-opus-4-7
-#    # exclude:
-#    #   - "**/*.lock"
-#    #   - "node_modules/**"

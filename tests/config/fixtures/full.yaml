@@ -20,13 +20,7 @@ repos:
     start_commit: abc1234
     model: claude-opus-4-7
     budget_usd: 1.00
-    exclude:
-      - "**/*.lock"
-      - "node_modules/**"
-      - "vendor/**"
 
   - name: project-b
     url: https://github.com/org/project-b
     branch: develop
-
-raw_auto_ingest: false

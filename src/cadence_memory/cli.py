@@ -162,7 +162,7 @@ def cmd_ingest(
         logger.warn("warning: source is outside wiki: %s", source)
 
     try:
-        cfg = load_config(wiki_dir / CONFIG_FILENAME)
+        cfg = load_config(wiki_dir / CONFIG_FILENAME, logger=logger)
     except ConfigError as exc:
         logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
@@ -220,7 +220,7 @@ def cmd_lint(
         raise typer.Exit(code=1) from exc
 
     try:
-        cfg = load_config(wiki_dir / CONFIG_FILENAME)
+        cfg = load_config(wiki_dir / CONFIG_FILENAME, logger=logger)
     except ConfigError as exc:
         logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc

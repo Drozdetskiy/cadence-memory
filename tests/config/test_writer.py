@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,34 @@ from cadence_memory.config.writer import (
     load_yaml_roundtrip,
     remove_repo,
 )
+from cadence_memory.progress.events import ProgressEvent
+
+
+@dataclass
+class _RecordingLogger:
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        pass
+
+    def info(self, fmt: str, *args: object) -> None:
+        pass
+
+    def warn(self, fmt: str, *args: object) -> None:
+        self.warnings.append(fmt % args if args else fmt)
+
+    def error(self, fmt: str, *args: object) -> None:
+        pass
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: ProgressEvent) -> None:
+        pass
 
 
 def test_writer_preserves_top_and_inline_comments(tmp_path: Path) -> None:
@@ -367,3 +396,58 @@ def test_list_invalid_format_raises_value_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="format"):
         list_repos(cfg, format="csv")  # type: ignore[arg-type]
+
+
+def test_add_repo_surfaces_unknown_key_warning_exactly_once(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    _write(
+        cfg,
+        """\
+model: claude-sonnet-4-6
+raw_auto_ingest: true
+""",
+    )
+    recording = _RecordingLogger()
+
+    add_repo(cfg, name="alpha", url="git@github.com:org/alpha.git", logger=recording)
+
+    matching = [w for w in recording.warnings if "raw_auto_ingest" in w]
+    assert len(matching) == 1, recording.warnings
+
+
+def test_remove_repo_surfaces_unknown_key_warning_exactly_once(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    _write(
+        cfg,
+        """\
+raw_auto_ingest: true
+repos:
+  - name: alpha
+    url: git@github.com:org/alpha.git
+""",
+    )
+    recording = _RecordingLogger()
+
+    remove_repo(cfg, name="alpha", logger=recording)
+
+    matching = [w for w in recording.warnings if "raw_auto_ingest" in w]
+    assert len(matching) == 1, recording.warnings
+
+
+def test_list_repos_surfaces_unknown_key_warning(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    _write(
+        cfg,
+        """\
+raw_auto_ingest: true
+repos:
+  - name: alpha
+    url: git@github.com:org/alpha.git
+""",
+    )
+    recording = _RecordingLogger()
+
+    list_repos(cfg, format="json", logger=recording)
+
+    matching = [w for w in recording.warnings if "raw_auto_ingest" in w]
+    assert len(matching) == 1, recording.warnings

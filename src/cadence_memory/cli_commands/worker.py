@@ -85,13 +85,16 @@ def cmd_run(
     elif mode != "commits":
         _fail("--mode must be 'commits' or 'bootstrap'", code=2)
 
+    overrides = get_overrides(ctx)
+    bootstrap_logger: Logger = make_logger(None, overrides)
+
     try:
         wiki_dir = _resolve_wiki_dir(wiki)
     except WikiNotFoundError as exc:
         _fail(str(exc))
 
     try:
-        config = load_config(wiki_dir / CONFIG_FILENAME)
+        config = load_config(wiki_dir / CONFIG_FILENAME, logger=bootstrap_logger)
     except ConfigError as exc:
         _fail(str(exc))
 
@@ -101,7 +104,6 @@ def cmd_run(
     except StateError as exc:
         _fail(str(exc))
 
-    overrides = get_overrides(ctx)
     logger: Logger = make_logger(config, overrides, wiki_dir=wiki_dir)
 
     cache = DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")
@@ -213,17 +215,19 @@ def cmd_daemon(
     except WikiNotFoundError as exc:
         _fail(str(exc))
 
+    overrides = get_overrides(ctx)
+    bootstrap_logger: Logger = make_logger(None, overrides)
+
     try:
-        config = load_config(wiki_dir / CONFIG_FILENAME)
+        config = load_config(wiki_dir / CONFIG_FILENAME, logger=bootstrap_logger)
     except ConfigError as exc:
         _fail(str(exc))
 
-    overrides = get_overrides(ctx)
     logger: Logger = make_logger(config, overrides, wiki_dir=wiki_dir)
     logger.info("starting daemon (poll_interval=%ds)", config.worker.poll_interval_s)
 
     def _config_factory() -> Config:
-        return load_config(wiki_dir / CONFIG_FILENAME)
+        return load_config(wiki_dir / CONFIG_FILENAME, logger=logger)
 
     def _cache_factory() -> DefaultGitCache:
         return DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")

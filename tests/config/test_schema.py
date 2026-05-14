@@ -33,7 +33,6 @@ def test_config_fields_present() -> None:
         "idle_timeout_s",
         "worker",
         "repos",
-        "raw_auto_ingest",
         "progress",
     }
 
@@ -47,7 +46,6 @@ def test_repoconfig_fields_present() -> None:
         "start_commit",
         "model",
         "budget_usd",
-        "exclude",
     }
 
 
@@ -69,7 +67,6 @@ def test_config_defaults() -> None:
     assert cfg.idle_timeout_s == 300
     assert cfg.worker == WorkerConfig()
     assert cfg.repos == ()
-    assert cfg.raw_auto_ingest is False
     assert cfg.progress == ProgressConfig()
 
 
@@ -88,7 +85,6 @@ def test_repoconfig_defaults() -> None:
     assert r.start_commit is None
     assert r.model is None
     assert r.budget_usd is None
-    assert r.exclude == ()
 
 
 def test_config_is_immutable() -> None:

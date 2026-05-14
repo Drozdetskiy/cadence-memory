@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,36 @@ from cadence_memory.config import (
     load_config,
     parse_config,
 )
+from cadence_memory.progress.events import ProgressEvent
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@dataclass
+class _RecordingLogger:
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        pass
+
+    def info(self, fmt: str, *args: object) -> None:
+        pass
+
+    def warn(self, fmt: str, *args: object) -> None:
+        self.warnings.append(fmt % args if args else fmt)
+
+    def error(self, fmt: str, *args: object) -> None:
+        pass
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: ProgressEvent) -> None:
+        pass
 
 
 def test_minimal_loads() -> None:
@@ -25,7 +54,6 @@ def test_minimal_loads() -> None:
     assert cfg.budget_usd == 0.50
     assert cfg.idle_timeout_s == 300
     assert cfg.worker == WorkerConfig()
-    assert cfg.raw_auto_ingest is False
     assert cfg.repos == (RepoConfig(name="project-a", url="git@github.com:org/a.git"),)
 
 
@@ -34,7 +62,6 @@ def test_full_loads() -> None:
     assert cfg.model == "claude-sonnet-4-6"
     assert cfg.budget_usd == 0.50
     assert cfg.idle_timeout_s == 300
-    assert cfg.raw_auto_ingest is False
 
     expected_worker = WorkerConfig(
         poll_interval_s=3600,
@@ -59,7 +86,6 @@ def test_full_loads() -> None:
         start_commit="abc1234",
         model="claude-opus-4-7",
         budget_usd=1.00,
-        exclude=("**/*.lock", "node_modules/**", "vendor/**"),
     )
     assert cfg.repos[1] == RepoConfig(
         name="project-b",
@@ -75,20 +101,23 @@ def test_empty_file_uses_all_defaults(tmp_path: Path) -> None:
     assert cfg == Config()
 
 
-def test_unknown_top_key_errors() -> None:
+def test_unknown_top_level_key_warns_and_continues() -> None:
     fixture = FIXTURES / "unknown_key.yaml"
-    with pytest.raises(ConfigError) as exc_info:
-        load_config(fixture)
-    assert "garbage" in exc_info.value.message
-    assert exc_info.value.path == fixture
+    recording = _RecordingLogger()
+    cfg = load_config(fixture, logger=recording)
+    assert len(recording.warnings) == 1
+    assert "garbage" in recording.warnings[0]
+    assert cfg == Config(repos=(RepoConfig(name="project-a", url="git@github.com:org/a.git"),))
 
 
-def test_unknown_repo_key_errors() -> None:
+def test_unknown_repo_key_warns_and_continues() -> None:
+    recording = _RecordingLogger()
     data = {"repos": [{"name": "project-a", "url": "git@x:a.git", "weird": 1}]}
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config(data, path=Path("<test>"))
-    assert "repos[0]" in exc_info.value.message
-    assert "weird" in exc_info.value.message
+    cfg = parse_config(data, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "repos[0]" in recording.warnings[0]
+    assert "weird" in recording.warnings[0]
+    assert cfg == Config(repos=(RepoConfig(name="project-a", url="git@x:a.git"),))
 
 
 def test_bad_slug_errors() -> None:
@@ -205,29 +234,6 @@ def test_repos_not_list_errors() -> None:
     assert "list" in exc_info.value.message
 
 
-def test_exclude_non_string_errors() -> None:
-    data_empty = {
-        "repos": [{"name": "project-a", "url": "git@x:a.git", "exclude": [""]}],
-    }
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config(data_empty, path=Path("<test>"))
-    assert "repos[0].exclude" in exc_info.value.message
-
-    data_int = {
-        "repos": [{"name": "project-a", "url": "git@x:a.git", "exclude": [123]}],
-    }
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config(data_int, path=Path("<test>"))
-    assert "repos[0].exclude" in exc_info.value.message
-
-
-def test_exclude_not_a_list_errors() -> None:
-    data = {"repos": [{"name": "project-a", "url": "git@x:a.git", "exclude": "single"}]}
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config(data, path=Path("<test>"))
-    assert "repos[0].exclude" in exc_info.value.message
-    assert "list of strings" in exc_info.value.message
-
 
 def test_worker_not_mapping_errors() -> None:
     with pytest.raises(ConfigError) as exc_info:
@@ -236,11 +242,13 @@ def test_worker_not_mapping_errors() -> None:
     assert "mapping" in exc_info.value.message
 
 
-def test_unknown_worker_key_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"worker": {"bogus": 1}}, path=Path("<test>"))
-    assert "worker" in exc_info.value.message
-    assert "bogus" in exc_info.value.message
+def test_unknown_worker_key_warns_and_continues() -> None:
+    recording = _RecordingLogger()
+    cfg = parse_config({"worker": {"bogus": 1}}, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "worker" in recording.warnings[0]
+    assert "bogus" in recording.warnings[0]
+    assert cfg.worker == WorkerConfig()
 
 
 def test_repo_entry_not_mapping_errors() -> None:
@@ -354,22 +362,15 @@ def test_worker_stop_on_failure_non_bool_errors() -> None:
     assert "worker.stop_on_failure" in exc_info.value.message
 
 
-def test_non_bool_raw_auto_ingest_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"raw_auto_ingest": "true"}, path=Path("<test>"))
-    assert "raw_auto_ingest" in exc_info.value.message
-    assert "boolean" in exc_info.value.message
 
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"raw_auto_ingest": 1}, path=Path("<test>"))
-    assert "raw_auto_ingest" in exc_info.value.message
-
-
-def test_unknown_keys_with_mixed_types_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({1: "value", "garbage": True}, path=Path("<test>"))
-    assert "garbage" in exc_info.value.message
-    assert "1" in exc_info.value.message
+def test_unknown_keys_with_mixed_types_warns() -> None:
+    recording = _RecordingLogger()
+    cfg = parse_config({1: "value", "garbage": True}, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 2
+    combined = " ".join(recording.warnings)
+    assert "garbage" in combined
+    assert "1" in combined
+    assert cfg == Config()
 
 
 def test_non_number_budget_errors() -> None:
@@ -422,11 +423,13 @@ def test_progress_not_mapping_errors() -> None:
     assert "mapping" in exc_info.value.message
 
 
-def test_progress_unknown_key_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"progress": {"bogus": 1}}, path=Path("<test>"))
-    assert "progress" in exc_info.value.message
-    assert "bogus" in exc_info.value.message
+def test_progress_unknown_key_warns_and_continues() -> None:
+    recording = _RecordingLogger()
+    cfg = parse_config({"progress": {"bogus": 1}}, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "progress" in recording.warnings[0]
+    assert "bogus" in recording.warnings[0]
+    assert cfg.progress == ProgressConfig()
 
 
 def test_progress_jsonl_non_bool_errors() -> None:
@@ -478,3 +481,28 @@ def test_config_equality_includes_progress() -> None:
     cfg2 = parse_config({"progress": {"jsonl": False}}, path=Path("<test>"))
     assert cfg1.progress == cfg2.progress
     assert cfg1 == cfg2
+
+
+def test_malformed_known_key_still_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"model": 123}, path=Path("<test>"))
+    assert "model" in exc_info.value.message
+
+
+def test_legacy_exclude_is_unknown_key() -> None:
+    recording = _RecordingLogger()
+    data = {"repos": [{"name": "project-a", "url": "git@x:a.git", "exclude": [".lock"]}]}
+    cfg = parse_config(data, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "repos[0]" in recording.warnings[0]
+    assert "exclude" in recording.warnings[0]
+    assert cfg == Config(repos=(RepoConfig(name="project-a", url="git@x:a.git"),))
+
+
+def test_legacy_raw_auto_ingest_is_unknown_key() -> None:
+    recording = _RecordingLogger()
+    data: dict[str, object] = {"raw_auto_ingest": True}
+    cfg = parse_config(data, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "raw_auto_ingest" in recording.warnings[0]
+    assert cfg == Config()
