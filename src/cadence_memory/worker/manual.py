@@ -13,12 +13,16 @@ from cadence_memory.config.schema import Config
 from cadence_memory.documents.frontmatter import FrontmatterError, parse_page
 from cadence_memory.executor.runner import ClaudeRunner
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
+from cadence_memory.progress.events import ErrorEvent, PhaseEndEvent, PhaseStartEvent
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
     list_touched_paths,
     revert_wiki,
     stage_and_commit,
 )
+
+_NULL_LOGGER: Logger = NullLogger()
 
 # duplication intentional — see TASK 1016
 _INDEX_HEAD_LINES = 60
@@ -113,6 +117,7 @@ def ingest_file(
     runner: ClaudeRunner,
     prompt_template: str | None = None,
     clock: Callable[[], datetime] = _utc_now,
+    logger: Logger = _NULL_LOGGER,
 ) -> ManualIngestOutcome:
     """Run a single manual ingest for `source_path` and return a `ManualIngestOutcome`.
 
@@ -139,15 +144,26 @@ def ingest_file(
         log_tail=log_tail,
     )
 
+    phase_start = datetime.now(UTC)
+    logger.log_event(PhaseStartEvent("manual-ingest", source=str(source_path)))
+
     result = runner.run(
         prompt=rendered,
         model=config.model,
         allowed_tools=WIKI_READWRITE,
         idle_timeout_s=config.idle_timeout_s,
         cwd=wiki_dir,
+        logger=logger,
+        phase="manual-ingest",
     )
 
     if not result.success:
+        logger.log_event(
+            ErrorEvent(
+                phase="manual-ingest",
+                message=result.error or "claude run failed",
+            )
+        )
         revert_wiki(wiki_dir, preserve=pre_dirty)
         today_iso = clock().date().isoformat()
         append_log_failure(
@@ -157,6 +173,15 @@ def ingest_file(
             subject=source_path.name,
             error=result.error or "claude run failed",
             today_iso=today_iso,
+        )
+        phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+        logger.log_event(
+            PhaseEndEvent(
+                "manual-ingest",
+                duration_ms=phase_duration_ms,
+                result="failed",
+                cost_usd_estimate=result.cost_usd,
+            )
         )
         return ManualIngestOutcome(
             success=False,
@@ -174,6 +199,13 @@ def ingest_file(
         try:
             parse_page(path)
         except FrontmatterError as exc:
+            logger.log_event(
+                ErrorEvent(
+                    phase="manual-ingest",
+                    message="frontmatter error",
+                    detail=str(exc),
+                )
+            )
             revert_wiki(wiki_dir, preserve=pre_dirty)
             today_iso = clock().date().isoformat()
             append_log_failure(
@@ -183,6 +215,15 @@ def ingest_file(
                 subject=source_path.name,
                 error=str(exc),
                 today_iso=today_iso,
+            )
+            phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+            logger.log_event(
+                PhaseEndEvent(
+                    "manual-ingest",
+                    duration_ms=phase_duration_ms,
+                    result="failed",
+                    cost_usd_estimate=result.cost_usd,
+                )
             )
             return ManualIngestOutcome(
                 success=False,
@@ -196,6 +237,16 @@ def ingest_file(
     wiki_sha = stage_and_commit(
         wiki_dir=wiki_dir,
         message=f"cadence-memory: ingest-manual {source_path.name}",
+    )
+
+    phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+    logger.log_event(
+        PhaseEndEvent(
+            "manual-ingest",
+            duration_ms=phase_duration_ms,
+            result="ok",
+            cost_usd_estimate=result.cost_usd,
+        )
     )
 
     return ManualIngestOutcome(

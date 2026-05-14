@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Protocol
 
 from cadence_memory.executor.streaming_runner import StreamingClaudeRunner
+from cadence_memory.progress.logger import Logger, NullLogger
+
+_NULL_LOGGER: Logger = NullLogger()
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +31,8 @@ class ClaudeRunner(Protocol):
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        logger: Logger = _NULL_LOGGER,
+        phase: str = "claude",
     ) -> ClaudeResult: ...
 
 
@@ -47,6 +52,8 @@ class DefaultClaudeRunner:
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        logger: Logger = _NULL_LOGGER,
+        phase: str = "claude",
     ) -> ClaudeResult:
         raw = self._streaming.run(
             prompt,
@@ -55,6 +62,8 @@ class DefaultClaudeRunner:
             allowed_tools=allowed_tools,
             extra_args=(),
             idle_timeout_s=idle_timeout_s,
+            logger=logger,
+            phase=phase,
         )
         return ClaudeResult(
             success=(raw.exit_code == 0),

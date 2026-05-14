@@ -28,6 +28,13 @@ def _scaffold(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _scaffold_with_color(tmp_path: Path) -> Path:
+    _scaffold(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return tmp_path
+
+
 def _fake_run_pending_factory(
     *,
     events_processed: int = 0,
@@ -239,3 +246,53 @@ def test_cli_run_passes_only_and_limit(tmp_path: Path, monkeypatch: pytest.Monke
     assert len(captured) == 1
     assert captured[0]["only_repo"] == "proj"
     assert captured[0]["limit"] == 5
+
+
+def test_cli_run_phase_header_and_summary_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_pending",
+        _fake_run_pending_factory(events_processed=3, events_failed=0, cost_usd_total=0.15),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["worker", "run", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a) phase header
+    assert "starting worker run" in result.stdout
+    # (b) final summary present
+    assert "processed 3" in result.stdout
+    assert "$0.15" in result.stdout
+
+
+def test_cli_run_no_color_strips_ansi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _scaffold_with_color(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_pending",
+        _fake_run_pending_factory(),
+    )
+    runner = CliRunner()
+
+    result_color = runner.invoke(app, ["worker", "run", "--wiki", str(tmp_path)])
+    assert "\x1b[" in result_color.stdout
+
+    result_plain = runner.invoke(app, ["--no-color", "worker", "run", "--wiki", str(tmp_path)])
+    assert "\x1b[" not in result_plain.stdout
+    assert "processed 0" in result_plain.stdout
+
+
+def test_cli_run_quiet_suppresses_info(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_pending",
+        _fake_run_pending_factory(events_processed=1),
+    )
+    runner = CliRunner()
+
+    result_quiet = runner.invoke(app, ["--quiet", "worker", "run", "--wiki", str(tmp_path)])
+    assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
+    assert "starting worker run" not in result_quiet.stdout
+    assert "processed 1" in result_quiet.stdout

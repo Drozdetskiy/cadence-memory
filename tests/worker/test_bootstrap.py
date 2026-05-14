@@ -14,6 +14,13 @@ from cadence_memory.config.schema import Config, RepoConfig, WorkerConfig
 from cadence_memory.executor.runner import ClaudeResult
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
 from cadence_memory.git.cache import CloneResult, CommitInfo
+from cadence_memory.progress.events import (
+    PhaseEndEvent,
+    PhaseStartEvent,
+    ProgressEvent,
+    StageEndEvent,
+    StageStartEvent,
+)
 from cadence_memory.worker.bootstrap import (
     BootstrapOutcome,
     run_bootstrap,
@@ -686,4 +693,136 @@ def test_bootstrap_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> 
     )
 
     assert len(runner.calls) == 1
-    assert runner.extra_kwargs == [{}]
+    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
+
+
+@dataclass
+class _RecordingLogger:
+    events: list[ProgressEvent] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        pass
+
+    def info(self, fmt: str, *args: object) -> None:
+        pass
+
+    def warn(self, fmt: str, *args: object) -> None:
+        pass
+
+    def error(self, fmt: str, *args: object) -> None:
+        pass
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: ProgressEvent) -> None:
+        self.events.append(event)
+
+
+def test_bootstrap_emits_phase_and_stage_events(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner()
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+    recording = _RecordingLogger()
+
+    run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1, 2),
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    starts = [e for e in recording.events if isinstance(e, PhaseStartEvent)]
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    stage_starts = [e for e in recording.events if isinstance(e, StageStartEvent)]
+    stage_ends = [e for e in recording.events if isinstance(e, StageEndEvent)]
+
+    assert len(starts) == 1
+    assert starts[0].phase == "bootstrap"
+    assert starts[0].repo == "project-a"
+    assert len(ends) == 1
+    assert ends[0].phase == "bootstrap"
+    assert ends[0].result == "ok"
+    assert len(stage_starts) == 2
+    assert stage_starts[0].stage_index == 1
+    assert stage_starts[1].stage_index == 2
+    assert len(stage_ends) == 2
+    assert all(e.result == "ok" for e in stage_ends)
+
+
+def test_bootstrap_emits_error_event_on_runner_failure(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner(
+        side_effects=[
+            lambda cwd: ClaudeResult(
+                success=False,
+                final_text="",
+                cost_usd=None,
+                duration_ms=None,
+                tool_call_count=0,
+                error="stage-1 exploded",
+            )
+        ]
+    )
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+    recording = _RecordingLogger()
+
+    from cadence_memory.progress.events import ErrorEvent
+
+    run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert "stage-1 exploded" in errors[0].message
+    stage_ends = [e for e in recording.events if isinstance(e, StageEndEvent)]
+    assert stage_ends[0].result == "failed"
+
+
+def test_bootstrap_emits_error_event_on_frontmatter_violation(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+
+    def write_bad_page(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "bad.md").write_text("no frontmatter\n", encoding="utf-8")
+        return _success_result()
+
+    runner = _make_runner(side_effects=[write_bad_page])
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+    recording = _RecordingLogger()
+
+    from cadence_memory.progress.events import ErrorEvent
+
+    run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        stages=(1,),
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].message == "frontmatter error"
+    stage_ends = [e for e in recording.events if isinstance(e, StageEndEvent)]
+    assert stage_ends[0].result == "failed"

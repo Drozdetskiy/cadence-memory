@@ -97,3 +97,25 @@ def test_cli_hooks_install_wiki_not_found(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "config.yaml" in result.stderr
     assert "Traceback" not in result.output
+
+
+def test_cli_hooks_install_outcome_line_present(tmp_path: Path) -> None:
+    _setup_wiki(tmp_path)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["hooks", "install", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    # (a/b) outcome line present via logger.info
+    assert "installed:" in result.stdout
+
+
+def test_cli_hooks_install_quiet_suppresses_info(tmp_path: Path) -> None:
+    _setup_wiki(tmp_path)
+    runner = CliRunner()
+
+    # --quiet suppresses INFO outcome lines
+    result = runner.invoke(app, ["--quiet", "hooks", "install", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "installed:" not in result.stdout

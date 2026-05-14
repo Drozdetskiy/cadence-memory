@@ -14,6 +14,8 @@ from cadence_memory.config.schema import Config
 from cadence_memory.documents.frontmatter import FrontmatterError, parse_page
 from cadence_memory.executor.runner import ClaudeRunner
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
+from cadence_memory.progress.events import ErrorEvent, PhaseEndEvent, PhaseStartEvent
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.wiki.branch import create_or_switch_branch
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
@@ -21,6 +23,8 @@ from cadence_memory.worker.wiki_commit import (
     revert_wiki,
     stage_and_commit,
 )
+
+_NULL_LOGGER: Logger = NullLogger()
 
 # duplication intentional — see TASK 1016
 _INDEX_HEAD_LINES = 60
@@ -98,6 +102,7 @@ def run_lint(
     only_repo: str | None = None,
     clock: Callable[[], datetime] = _utc_now,
     prompt_template: str | None = None,
+    logger: Logger = _NULL_LOGGER,
 ) -> LintOutcome:
     """Audit the wiki via Claude and return a `LintOutcome`.
 
@@ -130,15 +135,26 @@ def run_lint(
         scope_hint=_scope_hint(only_repo),
     )
 
+    phase_start = datetime.now(UTC)
+    logger.log_event(PhaseStartEvent("lint", repo=only_repo))
+
     result = runner.run(
         prompt=rendered,
         model=config.model,
         allowed_tools=WIKI_READWRITE,
         idle_timeout_s=config.idle_timeout_s,
         cwd=wiki_dir,
+        logger=logger,
+        phase="lint",
     )
 
     if not result.success:
+        logger.log_event(
+            ErrorEvent(
+                phase="lint",
+                message=result.error or "claude run failed",
+            )
+        )
         revert_wiki(wiki_dir, preserve=pre_dirty)
         append_log_failure(
             wiki_dir=wiki_dir,
@@ -147,6 +163,15 @@ def run_lint(
             subject=branch_name,
             error=result.error or "claude run failed",
             today_iso=today_iso,
+        )
+        phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+        logger.log_event(
+            PhaseEndEvent(
+                "lint",
+                duration_ms=phase_duration_ms,
+                result="failed",
+                cost_usd_estimate=result.cost_usd,
+            )
         )
         return LintOutcome(
             success=False,
@@ -165,6 +190,13 @@ def run_lint(
         try:
             parse_page(path)
         except FrontmatterError as exc:
+            logger.log_event(
+                ErrorEvent(
+                    phase="lint",
+                    message="frontmatter error",
+                    detail=str(exc),
+                )
+            )
             revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
@@ -173,6 +205,15 @@ def run_lint(
                 subject=branch_name,
                 error=str(exc),
                 today_iso=today_iso,
+            )
+            phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+            logger.log_event(
+                PhaseEndEvent(
+                    "lint",
+                    duration_ms=phase_duration_ms,
+                    result="failed",
+                    cost_usd_estimate=result.cost_usd,
+                )
             )
             return LintOutcome(
                 success=False,
@@ -187,6 +228,16 @@ def run_lint(
     wiki_sha = stage_and_commit(
         wiki_dir=wiki_dir,
         message=f"cadence-memory: lint {today_iso}",
+    )
+
+    phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+    logger.log_event(
+        PhaseEndEvent(
+            "lint",
+            duration_ms=phase_duration_ms,
+            result="ok",
+            cost_usd_estimate=result.cost_usd,
+        )
     )
 
     return LintOutcome(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 from collections.abc import Callable, Iterator
@@ -17,6 +16,7 @@ from cadence_memory.executor.runner import ClaudeResult
 from cadence_memory.git.cache import CloneResult, CommitInfo
 from cadence_memory.git.errors import GitError, HistoryRewrittenError
 from cadence_memory.git.walker import IngestEvent, NoiseBatchEvent, SingleCommitEvent
+from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent, ProgressEvent
 from cadence_memory.worker.run import RunSummary, run_pending
 from cadence_memory.worker.state import RepoState, WorkerState
 
@@ -118,6 +118,7 @@ class _FakeClaudeRunner:
         allowed_tools: tuple[str, ...],
         idle_timeout_s: int,
         cwd: Path | None = None,
+        **extra: object,
     ) -> ClaudeResult:
         self.calls.append(
             _RunCall(
@@ -133,6 +134,34 @@ class _FakeClaudeRunner:
             assert cwd is not None
             return effect(cwd)
         return self.default_result
+
+
+@dataclass
+class _RecordingLogger:
+    events: list[ProgressEvent] = field(default_factory=list)
+    messages: list[str] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def info(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def warn(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def error(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: ProgressEvent) -> None:
+        self.events.append(event)
 
 
 @dataclass
@@ -471,7 +500,7 @@ def test_run_dry_run_calls_no_runner(tmp_path: Path) -> None:
     cache = _FakeGitCache(commits_by_repo={"project-a": commits})
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg(),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     _state, summary = run_pending(
         wiki_dir=wiki,
@@ -481,13 +510,13 @@ def test_run_dry_run_calls_no_runner(tmp_path: Path) -> None:
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
     assert runner.calls == []
     assert summary.events_processed == 0
     assert not (wiki / ".cadence-memory" / "state.json").exists()
-    text = out.getvalue()
+    text = " ".join(recording.messages)
     assert "project-a: 2 pending events" in text
     assert "[single]" in text
 
@@ -499,7 +528,7 @@ def test_run_dry_run_plan_format(tmp_path: Path) -> None:
     cache = _FakeGitCache(commits_by_repo={"project-a": commits})
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg(),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     run_pending(
         wiki_dir=wiki,
@@ -509,15 +538,15 @@ def test_run_dry_run_plan_format(tmp_path: Path) -> None:
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    lines = out.getvalue().splitlines()
-    assert lines[0] == "plan:"
-    assert lines[-1].startswith("total:")
-    assert "model=claude-sonnet-4-6" in lines[-1]
-    assert "budget" not in lines[-1]
-    event_line = next(line for line in lines if "[single]" in line)
+    msgs = recording.messages
+    assert msgs[0] == "plan:"
+    assert msgs[-1].startswith("total:")
+    assert "model=claude-sonnet-4-6" in msgs[-1]
+    assert "budget" not in msgs[-1]
+    event_line = next(m for m in msgs if "[single]" in m)
     truncated = "x" * 72
     assert truncated in event_line
     assert ("x" * 73) not in event_line
@@ -585,7 +614,7 @@ def test_run_dry_run_shows_noise_batch(tmp_path: Path, monkeypatch: pytest.Monke
     cache = _FakeGitCache()
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg(),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     noise = NoiseBatchEvent(
         repo_name="project-a",
@@ -617,10 +646,10 @@ def test_run_dry_run_shows_noise_batch(tmp_path: Path, monkeypatch: pytest.Monke
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    text = out.getvalue()
+    text = " ".join(recording.messages)
     assert "[noise:2]" in text
     assert "bbbbbbb" in text
     assert "chore(deps): bump b" in text
@@ -713,7 +742,7 @@ def test_run_dry_run_history_rewritten_prints_message_no_state_write(
     cache = _FakeGitCache()
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg("project-a"),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     def fake_iter(
         *,
@@ -738,10 +767,10 @@ def test_run_dry_run_history_rewritten_prints_message_no_state_write(
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    assert "project-a: history rewritten — needs reset" in out.getvalue()
+    assert "project-a: history rewritten — needs reset" in " ".join(recording.messages)
     assert not (wiki / ".cadence-memory" / "state.json").exists()
 
 
@@ -819,7 +848,7 @@ def test_run_dry_run_iter_pending_git_error_prints_message_no_state_write(
     cache = _FakeGitCache()
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg("a"),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     def fake_iter(
         *,
@@ -844,10 +873,10 @@ def test_run_dry_run_iter_pending_git_error_prints_message_no_state_write(
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    assert "a: cache read failed — git log failed: bad object" in out.getvalue()
+    assert "a: cache read failed — git log failed: bad object" in " ".join(recording.messages)
     assert not (wiki / ".cadence-memory" / "state.json").exists()
 
 
@@ -860,7 +889,7 @@ def test_run_dry_run_cache_ensure_error_prints_message_no_state_write(
     )
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg("a"),))
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     run_pending(
         wiki_dir=wiki,
@@ -870,10 +899,11 @@ def test_run_dry_run_cache_ensure_error_prints_message_no_state_write(
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    assert "a: cache unavailable — clone failed: network unreachable" in out.getvalue()
+    combined = " ".join(recording.messages)
+    assert "a: cache unavailable — clone failed: network unreachable" in combined
     assert not (wiki / ".cadence-memory" / "state.json").exists()
 
 
@@ -995,7 +1025,7 @@ def test_dry_run_budget_usd_in_config_does_not_appear_in_summary(tmp_path: Path)
     cache = _FakeGitCache(commits_by_repo={"project-a": commits})
     runner = _FakeClaudeRunner()
     config = _config(repos=(_repo_cfg(),), budget_usd=0.5)
-    out = io.StringIO()
+    recording = _RecordingLogger()
 
     run_pending(
         wiki_dir=wiki,
@@ -1005,7 +1035,34 @@ def test_dry_run_budget_usd_in_config_does_not_appear_in_summary(tmp_path: Path)
         runner=runner,
         dry_run=True,
         clock=_fixed_clock(),
-        out=out,
+        logger=recording,
     )
 
-    assert "budget" not in out.getvalue()
+    assert "budget" not in " ".join(recording.messages)
+
+
+def test_run_emits_phase_start_end_events_per_repo(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    commits = (_commit("a" * 40, "feat: one"),)
+    cache = _FakeGitCache(commits_by_repo={"project-a": commits})
+    runner = _FakeClaudeRunner()
+    config = _config(repos=(_repo_cfg(),))
+    recording = _RecordingLogger()
+
+    run_pending(
+        wiki_dir=wiki,
+        config=config,
+        state=WorkerState(),
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    starts = [
+        e for e in recording.events if isinstance(e, PhaseStartEvent) and e.phase == "worker-run"
+    ]
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent) and e.phase == "worker-run"]
+    assert len(starts) == 1
+    assert starts[0].repo == "project-a"
+    assert len(ends) == 1

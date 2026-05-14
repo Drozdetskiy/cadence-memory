@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import signal
-import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
 from cadence_memory.config.schema import Config
 from cadence_memory.executor.runner import ClaudeRunner
 from cadence_memory.git.cache import GitCache
+from cadence_memory.progress.events import ErrorEvent, PhaseEndEvent, PhaseStartEvent
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.lock import WorkerBusyError, worker_lock
 from cadence_memory.worker.run import run_pending
 from cadence_memory.worker.state import load_state, save_state
@@ -65,8 +67,7 @@ def _sleep_interruptible(
         remaining -= chunk
 
 
-def _default_log(message: str) -> None:
-    print(message, file=sys.stderr, flush=True)
+_NULL_LOGGER: Logger = NullLogger()
 
 
 def run_daemon(
@@ -80,7 +81,7 @@ def run_daemon(
     signals: DaemonSignals | None = None,
     sleep: Callable[[float], None] = time.sleep,
     iterations: int | None = None,
-    log: Callable[[str], None] = _default_log,
+    logger: Logger = _NULL_LOGGER,
 ) -> None:
     if signals is None:
         signals = DaemonSignals()
@@ -99,25 +100,46 @@ def run_daemon(
                 state = load_state(state_path)
                 cache = cache_factory()
                 runner = runner_factory()
+                tick_start = datetime.now(UTC)
+                logger.log_event(PhaseStartEvent("daemon-tick"))
                 new_state, summary = run_pending(
                     wiki_dir=wiki_dir,
                     config=config,
                     state=state,
                     cache=cache,
                     runner=runner,
+                    logger=logger,
                     should_stop_between_repos=signals.should_stop_between_repos,
                     should_stop_between_events=signals.should_stop_between_events,
                 )
                 save_state(state_path, new_state)
-                log(
-                    f"daemon: processed {summary.events_processed}, "
-                    f"failed {summary.events_failed}, "
-                    f"${summary.cost_usd_total:.2f}"
+                tick_duration_ms = int((datetime.now(UTC) - tick_start).total_seconds() * 1000)
+                logger.log_event(
+                    PhaseEndEvent(
+                        "daemon-tick",
+                        duration_ms=tick_duration_ms,
+                        result="ok",
+                        cost_usd_estimate=(
+                            summary.cost_usd_total if summary.cost_usd_total > 0 else None
+                        ),
+                    )
+                )
+                logger.info(
+                    "daemon: processed %s, failed %s, $%.2f",
+                    summary.events_processed,
+                    summary.events_failed,
+                    summary.cost_usd_total,
                 )
         except WorkerBusyError:
-            log("daemon: another worker is running; skipping this tick")
+            logger.warn("daemon: another worker is running; skipping this tick")
         except Exception as exc:
-            log(f"daemon: unexpected error: {exc!r}")
+            logger.log_event(
+                ErrorEvent(
+                    phase="daemon-tick",
+                    message="daemon: unexpected error",
+                    detail=repr(exc),
+                )
+            )
 
         iteration_count += 1
         if iterations is not None and iteration_count >= iterations:

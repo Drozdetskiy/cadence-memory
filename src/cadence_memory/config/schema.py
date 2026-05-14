@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
+class ProgressConfig:
+    """Progress logging tunables (`progress:` block)."""
+
+    jsonl: bool = False
+    jsonl_path: str = ".cadence-memory/progress.jsonl"
+    color: str = "auto"
+    level: str = "info"
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerConfig:
     """Worker tunables (design2 §5, `worker:` block)."""
 
@@ -39,3 +49,4 @@ class Config:
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     repos: tuple[RepoConfig, ...] = ()
     raw_auto_ingest: bool = False
+    progress: ProgressConfig = field(default_factory=ProgressConfig)

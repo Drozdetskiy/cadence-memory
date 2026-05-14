@@ -358,3 +358,41 @@ def test_status_long_failure_truncated_in_table_full_in_json(
     assert json_result.exit_code == 0, json_result.output
     parsed = json.loads(json_result.stdout)
     assert parsed["repos"][0]["last_failure"] == long_failure
+
+
+def test_status_short_output_exact_format_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold(tmp_path)
+    _write_config(wiki, [("repo-a", "main"), ("repo-b", "main")])
+    fake = _FakeGitCache(
+        head_local_results={"repo-a": "a" * 40, "repo-b": "b" * 40},
+        list_commits_counts={"repo-a": 2, "repo-b": 0},
+    )
+    _install_fake_cache(monkeypatch, fake)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["status", "--short", "--wiki", str(wiki)])
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    # (b) exact format preserved via logger.print (not logger.info)
+    assert len(lines) == 1
+    assert lines[0].startswith("cadence-memory:")
+    assert "2 repos" in lines[0]
+
+
+def test_status_short_quiet_still_shows_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold(tmp_path)
+    _write_config(wiki, [("repo-a", "main")])
+    fake = _FakeGitCache(head_local_results={"repo-a": "a" * 40})
+    _install_fake_cache(monkeypatch, fake)
+    runner = CliRunner()
+
+    # --short uses logger.print which bypasses level filter
+    result = runner.invoke(app, ["--quiet", "status", "--short", "--wiki", str(wiki)])
+
+    assert result.exit_code == 0, result.output
+    assert "cadence-memory:" in result.stdout

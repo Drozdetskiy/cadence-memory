@@ -563,4 +563,120 @@ def test_lint_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
     )
 
     assert len(runner.calls) == 1
-    assert runner.extra_kwargs == [{}]
+    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
+
+
+def test_lint_emits_phase_start_and_end_events(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent, ProgressEvent
+
+    @dataclass
+    class _RecordingLogger:
+        events: list[ProgressEvent] = field(default_factory=list)
+
+        @property
+        def path(self) -> str | None:
+            return None
+
+        def print(self, fmt: str, *args: object) -> None:
+            pass
+
+        def info(self, fmt: str, *args: object) -> None:
+            pass
+
+        def warn(self, fmt: str, *args: object) -> None:
+            pass
+
+        def error(self, fmt: str, *args: object) -> None:
+            pass
+
+        def section(self, label: str) -> None:
+            pass
+
+        def log_event(self, event: ProgressEvent) -> None:
+            self.events.append(event)
+
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner()
+    recording = _RecordingLogger()
+
+    run_lint(
+        wiki_dir=wiki,
+        config=_config(),
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    starts = [e for e in recording.events if isinstance(e, PhaseStartEvent)]
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    assert len(starts) == 1
+    assert starts[0].phase == "lint"
+    assert len(ends) == 1
+    assert ends[0].phase == "lint"
+    assert ends[0].result == "ok"
+
+
+def test_lint_emits_error_event_on_runner_failure(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import (
+        ErrorEvent,
+        PhaseEndEvent,
+        ProgressEvent,
+    )
+
+    @dataclass
+    class _RecordingLogger:
+        events: list[ProgressEvent] = field(default_factory=list)
+
+        @property
+        def path(self) -> str | None:
+            return None
+
+        def print(self, fmt: str, *args: object) -> None:
+            pass
+
+        def info(self, fmt: str, *args: object) -> None:
+            pass
+
+        def warn(self, fmt: str, *args: object) -> None:
+            pass
+
+        def error(self, fmt: str, *args: object) -> None:
+            pass
+
+        def section(self, label: str) -> None:
+            pass
+
+        def log_event(self, event: ProgressEvent) -> None:
+            self.events.append(event)
+
+    wiki = _init_wiki(tmp_path)
+
+    def fail(cwd: Path) -> ClaudeResult:
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=0.01,
+            duration_ms=50,
+            tool_call_count=0,
+            error="boom",
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[fail])
+    recording = _RecordingLogger()
+
+    outcome = run_lint(
+        wiki_dir=wiki,
+        config=_config(),
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is False
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].phase == "lint"
+    assert "boom" in errors[0].message
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result == "failed"

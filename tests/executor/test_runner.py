@@ -11,6 +11,9 @@ from cadence_memory.executor.runner import (
     DefaultClaudeRunner,
 )
 from cadence_memory.executor.streaming_runner import RunResult, StreamingClaudeRunner
+from cadence_memory.progress.logger import Logger, NullLogger, StdoutLogger
+
+_NULL_LOGGER: Logger = NullLogger()
 
 
 class FakeStreamingRunner(StreamingClaudeRunner):
@@ -23,6 +26,8 @@ class FakeStreamingRunner(StreamingClaudeRunner):
         self.captured_allowed_tools: tuple[str, ...] | None = None
         self.captured_extra_args: tuple[str, ...] | None = None
         self.captured_idle_timeout_s: float | None = None
+        self.captured_logger: Logger | None = None
+        self.captured_phase: str | None = None
         self.captured_extra_kwargs: dict[str, object] = {}
 
     def run(  # type: ignore[override]
@@ -34,6 +39,8 @@ class FakeStreamingRunner(StreamingClaudeRunner):
         allowed_tools: tuple[str, ...] = (),
         extra_args: tuple[str, ...] = (),
         idle_timeout_s: float = 300.0,
+        logger: Logger = _NULL_LOGGER,
+        phase: str = "claude",
         **extra: object,
     ) -> RunResult:
         self.captured_prompt = prompt
@@ -42,6 +49,8 @@ class FakeStreamingRunner(StreamingClaudeRunner):
         self.captured_allowed_tools = allowed_tools
         self.captured_extra_args = extra_args
         self.captured_idle_timeout_s = idle_timeout_s
+        self.captured_logger = logger
+        self.captured_phase = phase
         self.captured_extra_kwargs = dict(extra)
         return self._result
 
@@ -207,3 +216,27 @@ def test_default_runner_does_not_forward_budget_usd() -> None:
         idle_timeout_s=300,
     )
     assert "budget_usd" not in fake.captured_extra_kwargs
+
+
+def test_default_runner_forwards_null_logger_by_default() -> None:
+    fake = FakeStreamingRunner(_ok_result())
+    runner = DefaultClaudeRunner(streaming=fake)
+    runner.run(prompt="hi", model="m", allowed_tools=(), idle_timeout_s=300)
+    assert isinstance(fake.captured_logger, NullLogger)
+    assert fake.captured_phase == "claude"
+
+
+def test_default_runner_forwards_custom_logger_and_phase() -> None:
+    logger = StdoutLogger()
+    fake = FakeStreamingRunner(_ok_result())
+    runner = DefaultClaudeRunner(streaming=fake)
+    runner.run(
+        prompt="hi",
+        model="m",
+        allowed_tools=(),
+        idle_timeout_s=300,
+        logger=logger,
+        phase="bootstrap-stage",
+    )
+    assert fake.captured_logger is logger
+    assert fake.captured_phase == "bootstrap-stage"

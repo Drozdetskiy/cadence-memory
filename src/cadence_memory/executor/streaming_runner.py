@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -14,18 +15,32 @@ from pathlib import Path
 
 from cadence_memory.executor.events import (
     AssistantTextEvent,
-    ErrorEvent,
     ResultEvent,
+    ToolResultEvent,
     ToolUseEvent,
     parse_event,
 )
+from cadence_memory.executor.events import (
+    ErrorEvent as _StreamErrorEvent,
+)
 from cadence_memory.executor.process_group import ProcessGroupCleanup
+from cadence_memory.progress.events import (
+    ClaudeProgressEvent as _ClaudeProgressEvent,
+)
+from cadence_memory.progress.events import (
+    ErrorEvent as _ProgressErrorEvent,
+)
+from cadence_memory.progress.logger import Logger, NullLogger
+
+_NULL_LOGGER: Logger = NullLogger()
 
 _STDERR_BUFFER_LINES = 200
 _STDERR_JOIN_TIMEOUT_S = 1.0
 _PROC_WAIT_TIMEOUT_S = 5.0
 _WATCHDOG_EXIT_CODE = 124
 _WATCHDOG_ERROR_MESSAGE = "idle watchdog timeout"
+
+_CADENCE_MARKER_RE = re.compile(r"<<<CADENCE:([^>]+)>>>")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +76,8 @@ class StreamingClaudeRunner:
         allowed_tools: tuple[str, ...] = (),
         extra_args: tuple[str, ...] = (),
         idle_timeout_s: float = 300.0,
+        logger: Logger = _NULL_LOGGER,
+        phase: str = "claude",
     ) -> RunResult:
         argv = self._build_argv(
             model=model,
@@ -119,15 +136,39 @@ class StreamingClaudeRunner:
                     continue
                 if isinstance(evt, AssistantTextEvent):
                     final_text_parts.append(evt.text)
+                    m = _CADENCE_MARKER_RE.search(evt.text)
+                    if m:
+                        logger.log_event(
+                            _ClaudeProgressEvent(phase=phase, kind="signal", detail=m.group(1))
+                        )
                 elif isinstance(evt, ToolUseEvent):
                     tool_calls.append(evt)
+                    logger.log_event(
+                        _ClaudeProgressEvent(
+                            phase=phase,
+                            kind="tool-call",
+                            detail=f"{evt.tool}: {evt.input_summary}",
+                        )
+                    )
+                elif isinstance(evt, ToolResultEvent):
+                    if evt.is_error:
+                        logger.log_event(
+                            _ClaudeProgressEvent(
+                                phase=phase,
+                                kind="tool-result-error",
+                                detail=evt.content_summary,
+                            )
+                        )
                 elif isinstance(evt, ResultEvent):
                     cost_usd = evt.total_cost_usd
                     duration_ms = evt.duration_ms
-                elif isinstance(evt, ErrorEvent):
+                elif isinstance(evt, _StreamErrorEvent):
                     error_message = evt.message
 
             if watchdog_fired:
+                logger.log_event(
+                    _ProgressErrorEvent(phase=phase, message=_WATCHDOG_ERROR_MESSAGE, detail=None)
+                )
                 return RunResult(
                     exit_code=_WATCHDOG_EXIT_CODE,
                     final_text="".join(final_text_parts),

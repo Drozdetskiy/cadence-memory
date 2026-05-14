@@ -473,7 +473,7 @@ def test_budget_usd_in_config_does_not_affect_runner(tmp_path: Path) -> None:
     )
 
     assert len(runner.calls) == 1
-    assert runner.extra_kwargs == [{}]
+    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
 
 
 def test_noise_batch_event_uses_aggregated_subject(tmp_path: Path) -> None:
@@ -1030,3 +1030,188 @@ def test_missing_seed_files_yield_empty_context(tmp_path: Path, fname: str) -> N
     )
 
     assert outcome.success is True
+
+
+@dataclass
+class _RecordingLogger:
+    events: list[object] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        pass
+
+    def info(self, fmt: str, *args: object) -> None:
+        pass
+
+    def warn(self, fmt: str, *args: object) -> None:
+        pass
+
+    def error(self, fmt: str, *args: object) -> None:
+        pass
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: object) -> None:
+        self.events.append(event)
+
+
+def test_ingest_emits_start_and_end_events(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import IngestEndEvent, IngestStartEvent
+
+    wiki = _init_wiki(tmp_path)
+    runner = _FakeClaudeRunner()
+    cache = _FakeGitCache()
+    recording = _RecordingLogger()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is True
+    starts = [e for e in recording.events if isinstance(e, IngestStartEvent)]
+    ends = [e for e in recording.events if isinstance(e, IngestEndEvent)]
+    assert len(starts) == 1
+    assert starts[0].repo == "project-a"
+    assert len(ends) == 1
+    assert ends[0].result == "ok"
+
+
+def test_ingest_emits_error_event_on_runner_failure(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import ErrorEvent, IngestEndEvent
+
+    wiki = _init_wiki(tmp_path)
+
+    def fail(cwd: Path) -> ClaudeResult:
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=None,
+            duration_ms=None,
+            tool_call_count=0,
+            error="runner exploded",
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[fail])
+    cache = _FakeGitCache()
+    recording = _RecordingLogger()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is False
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert "runner exploded" in errors[0].message
+    ends = [e for e in recording.events if isinstance(e, IngestEndEvent)]
+    assert ends[0].result == "failed"
+
+
+def test_multi_shard_ingest_emits_balanced_start_end_events(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import IngestEndEvent, IngestStartEvent
+
+    wiki = _init_wiki(tmp_path)
+
+    def write_shard_one(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "first.md").write_text(_VALID_PAGE, encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="ok",
+            cost_usd=0.02,
+            duration_ms=100,
+            tool_call_count=1,
+            error=None,
+        )
+
+    def write_shard_two(cwd: Path) -> ClaudeResult:
+        (cwd / "projects" / "project-a" / "second.md").write_text(_VALID_PAGE, encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="ok",
+            cost_usd=0.04,
+            duration_ms=200,
+            tool_call_count=1,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_shard_one, write_shard_two])
+    cache = _FakeGitCache(diffs={"a" * 40: _huge_two_dir_diff()})
+    recording = _RecordingLogger()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is True
+    assert len(runner.calls) == 2
+    starts = [e for e in recording.events if isinstance(e, IngestStartEvent)]
+    ends = [e for e in recording.events if isinstance(e, IngestEndEvent)]
+    assert len(starts) == len(ends) == 1
+
+
+def test_ingest_emits_error_event_on_frontmatter_error(tmp_path: Path) -> None:
+    from cadence_memory.progress.events import ErrorEvent, IngestEndEvent
+
+    wiki = _init_wiki(tmp_path)
+
+    def write_bad_frontmatter(cwd: Path) -> ClaudeResult:
+        (cwd / "stub.md").write_text("no frontmatter here\n", encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="wrote",
+            cost_usd=0.02,
+            duration_ms=120,
+            tool_call_count=1,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_bad_frontmatter])
+    cache = _FakeGitCache()
+    recording = _RecordingLogger()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is False
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].message == "frontmatter error"
+    assert errors[0].phase == "ingest"
+    ends = [e for e in recording.events if isinstance(e, IngestEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result == "failed"

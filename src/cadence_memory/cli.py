@@ -10,9 +10,11 @@ from cadence_memory.cli_commands.hooks import hooks_app
 from cadence_memory.cli_commands.repos import repos_app
 from cadence_memory.cli_commands.status import cmd_status
 from cadence_memory.cli_commands.worker import cmd_run, worker_app
+from cadence_memory.cli_state import CliOverrides, get_overrides, make_logger
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
 from cadence_memory.executor.runner import DefaultClaudeRunner
+from cadence_memory.progress.logger import Logger
 from cadence_memory.search import (
     Hit,
     NoBackendAvailableError,
@@ -46,6 +48,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool | None,
         typer.Option(
@@ -55,8 +58,21 @@ def main(
             help="Show version and exit.",
         ),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Enable verbose (debug-level) logging."),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", "-q", help="Suppress info-level progress output."),
+    ] = False,
+    no_color: Annotated[
+        bool,
+        typer.Option("--no-color", help="Disable ANSI color in progress output."),
+    ] = False,
 ) -> None:
     """cadence-memory CLI skeleton. See docs/design2.md and docs/features.md."""
+    ctx.obj = CliOverrides(verbose=verbose, quiet=quiet, no_color=no_color)
 
 
 @app.command()
@@ -84,6 +100,7 @@ def init(
 
 @app.command("bootstrap")
 def cmd_bootstrap(
+    ctx: typer.Context,
     repo: Annotated[
         str,
         typer.Argument(help="Name of the repo (from cadence-memory.toml) to bootstrap."),
@@ -107,18 +124,12 @@ def cmd_bootstrap(
 
     Alias for 'worker run --mode bootstrap --only <repo>'.
     """
-    cmd_run(
-        mode="bootstrap",
-        only=repo,
-        limit=None,
-        dry_run=False,
-        wiki=wiki,
-        strict=strict,
-    )
+    cmd_run(ctx, mode="bootstrap", only=repo, limit=None, dry_run=False, wiki=wiki, strict=strict)
 
 
 @app.command("ingest")
 def cmd_ingest(
+    ctx: typer.Context,
     source: Annotated[
         Path,
         typer.Argument(
@@ -131,46 +142,54 @@ def cmd_ingest(
     ] = None,
 ) -> None:
     """Ingest a single non-commit source (article, meeting notes, spec) into the master wiki."""
+    overrides = get_overrides(ctx)
+    logger: Logger = make_logger(None, overrides)
+
     try:
         wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
     except WikiNotFoundError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
 
     if not source.is_absolute():
         source = (wiki_dir / source).resolve()
 
     if not source.is_file():
-        typer.echo(f"error: source file not found: {source}", err=True)
+        logger.error("error: source file not found: %s", source)
         raise typer.Exit(code=2)
 
     if not source.is_relative_to(wiki_dir):
-        typer.echo(f"warning: source is outside wiki: {source}", err=True)
+        logger.warn("warning: source is outside wiki: %s", source)
 
     try:
         cfg = load_config(wiki_dir / CONFIG_FILENAME)
     except ConfigError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
+
+    logger = make_logger(cfg, overrides, wiki_dir=wiki_dir)
+    logger.info("ingesting %s", source.name)
 
     outcome = ingest_file(
         source_path=source,
         config=cfg,
         wiki_dir=wiki_dir,
         runner=DefaultClaudeRunner(),
+        logger=logger,
     )
 
     if not outcome.success:
-        typer.echo(f"failed: {outcome.error or 'claude run failed'}", err=True)
+        logger.error("failed: %s", outcome.error or "claude run failed")
         raise typer.Exit(code=1)
 
     cost = f"${outcome.cost_usd:.2f}" if outcome.cost_usd is not None else "(n/a)"
     sha_display = outcome.wiki_commit_sha if outcome.wiki_commit_sha is not None else "no changes"
-    typer.echo(f"ok: {sha_display} ({len(outcome.pages_touched)} pages, {cost})")
+    logger.print("ok: %s (%d pages, %s)", sha_display, len(outcome.pages_touched), cost)
 
 
 @app.command("lint")
 def cmd_lint(
+    ctx: typer.Context,
     apply: Annotated[
         bool,
         typer.Option(
@@ -191,17 +210,23 @@ def cmd_lint(
     ] = None,
 ) -> None:
     """Audit the master wiki for orphans, broken links, contradictions, and missing pages."""
+    overrides = get_overrides(ctx)
+    logger: Logger = make_logger(None, overrides)
+
     try:
         wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
     except WikiNotFoundError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
 
     try:
         cfg = load_config(wiki_dir / CONFIG_FILENAME)
     except ConfigError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
+
+    logger = make_logger(cfg, overrides, wiki_dir=wiki_dir)
+    logger.info("running lint")
 
     outcome = run_lint(
         wiki_dir=wiki_dir,
@@ -209,6 +234,7 @@ def cmd_lint(
         runner=DefaultClaudeRunner(),
         apply=apply,
         only_repo=only,
+        logger=logger,
     )
 
     switch_back: str | None = None
@@ -220,19 +246,22 @@ def cmd_lint(
         switch_back = f"switch back with `git checkout {outcome.previous_branch}`"
 
     if not outcome.success:
-        typer.echo(f"failed: {outcome.error or 'claude run failed'}", err=True)
+        logger.error("failed: %s", outcome.error or "claude run failed")
         if switch_back is not None:
-            typer.echo(switch_back)
+            logger.print("%s", switch_back)
         raise typer.Exit(code=1)
 
     cost = f"${outcome.cost_usd:.2f}" if outcome.cost_usd is not None else "(n/a)"
     sha_display = outcome.wiki_commit_sha if outcome.wiki_commit_sha is not None else "no changes"
-    typer.echo(
-        f"ok: {sha_display} ({len(outcome.pages_touched)} pages, {cost}) "
-        f"[branch={outcome.branch_used}]"
+    logger.print(
+        "ok: %s (%d pages, %s) [branch=%s]",
+        sha_display,
+        len(outcome.pages_touched),
+        cost,
+        outcome.branch_used,
     )
     if switch_back is not None:
-        typer.echo(switch_back)
+        logger.print("%s", switch_back)
 
 
 _SNIPPET_TABLE_MAX = 80

@@ -9,6 +9,7 @@ import pytest
 from cadence_memory.config import (
     Config,
     ConfigError,
+    ProgressConfig,
     RepoConfig,
     WorkerConfig,
     load_config,
@@ -380,3 +381,100 @@ def test_non_number_budget_errors() -> None:
     with pytest.raises(ConfigError) as exc_info:
         parse_config({"budget_usd": "free"}, path=Path("<test>"))
     assert "budget_usd" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# ProgressConfig tests
+# ---------------------------------------------------------------------------
+
+
+def test_progress_defaults_when_absent() -> None:
+    cfg = parse_config({}, path=Path("<test>"))
+    assert cfg.progress == ProgressConfig()
+    assert cfg.progress.jsonl is False
+    assert cfg.progress.jsonl_path == ".cadence-memory/progress.jsonl"
+    assert cfg.progress.color == "auto"
+    assert cfg.progress.level == "info"
+
+
+def test_progress_all_keys_accepted() -> None:
+    cfg = parse_config(
+        {
+            "progress": {
+                "jsonl": True,
+                "jsonl_path": "/tmp/out.jsonl",
+                "color": "always",
+                "level": "debug",
+            }
+        },
+        path=Path("<test>"),
+    )
+    assert cfg.progress.jsonl is True
+    assert cfg.progress.jsonl_path == "/tmp/out.jsonl"
+    assert cfg.progress.color == "always"
+    assert cfg.progress.level == "debug"
+
+
+def test_progress_not_mapping_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": "verbose"}, path=Path("<test>"))
+    assert "progress" in exc_info.value.message
+    assert "mapping" in exc_info.value.message
+
+
+def test_progress_unknown_key_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": {"bogus": 1}}, path=Path("<test>"))
+    assert "progress" in exc_info.value.message
+    assert "bogus" in exc_info.value.message
+
+
+def test_progress_jsonl_non_bool_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": {"jsonl": "yes"}}, path=Path("<test>"))
+    assert "progress.jsonl" in exc_info.value.message
+    assert "boolean" in exc_info.value.message
+
+
+def test_progress_jsonl_path_empty_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": {"jsonl_path": ""}}, path=Path("<test>"))
+    assert "progress.jsonl_path" in exc_info.value.message
+
+
+def test_progress_invalid_color_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": {"color": "rainbow"}}, path=Path("<test>"))
+    assert "progress.color" in exc_info.value.message
+    assert "auto" in exc_info.value.message
+
+
+def test_progress_all_valid_colors_accepted() -> None:
+    for color in ("auto", "always", "never"):
+        cfg = parse_config({"progress": {"color": color}}, path=Path("<test>"))
+        assert cfg.progress.color == color
+
+
+def test_progress_invalid_level_errors() -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config({"progress": {"level": "verbose"}}, path=Path("<test>"))
+    assert "progress.level" in exc_info.value.message
+    assert "debug" in exc_info.value.message
+
+
+def test_progress_all_valid_levels_accepted() -> None:
+    for level in ("debug", "info", "warn", "error"):
+        cfg = parse_config({"progress": {"level": level}}, path=Path("<test>"))
+        assert cfg.progress.level == level
+
+
+def test_progress_empty_section_uses_defaults() -> None:
+    cfg = parse_config({"progress": {}}, path=Path("<test>"))
+    assert cfg.progress == ProgressConfig()
+
+
+def test_config_equality_includes_progress() -> None:
+    cfg1 = parse_config({}, path=Path("<test>"))
+    cfg2 = parse_config({"progress": {"jsonl": False}}, path=Path("<test>"))
+    assert cfg1.progress == cfg2.progress
+    assert cfg1 == cfg2

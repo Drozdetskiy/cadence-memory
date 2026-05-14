@@ -32,6 +32,13 @@ def _scaffold(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _scaffold_with_color(tmp_path: Path) -> Path:
+    _scaffold(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return tmp_path
+
+
 @dataclass
 class _BootstrapCall:
     repo_cfg: RepoConfig
@@ -271,3 +278,66 @@ def test_cli_bootstrap_holds_worker_lock(tmp_path: Path, monkeypatch: pytest.Mon
     assert "worker.lock" in result.stderr
     assert "Traceback" not in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_cli_bootstrap_phase_header_and_summary_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_bootstrap",
+        _fake_run_bootstrap_factory(stages_failed=(), cost_usd_total=0.42),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["bootstrap", "proj", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a) phase header line appears
+    assert "starting bootstrap" in result.stdout
+    # (b) final summary line present with exact content
+    assert "stages run 5" in result.stdout
+    assert "failed 0" in result.stdout
+    assert "$0.42" in result.stdout
+
+
+def test_cli_bootstrap_no_color_strips_ansi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold_with_color(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_bootstrap",
+        _fake_run_bootstrap_factory(),
+    )
+    runner = CliRunner()
+
+    # With color: always in config, ANSI codes appear in INFO lines
+    result_color = runner.invoke(app, ["bootstrap", "proj", "--wiki", str(tmp_path)])
+    assert "\x1b[" in result_color.stdout
+
+    # With --no-color, ANSI is stripped
+    result_plain = runner.invoke(app, ["--no-color", "bootstrap", "proj", "--wiki", str(tmp_path)])
+    assert "\x1b[" not in result_plain.stdout
+    assert "stages run 5" in result_plain.stdout
+
+
+def test_cli_bootstrap_quiet_suppresses_info_verbose_shows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli_commands.worker.run_bootstrap",
+        _fake_run_bootstrap_factory(stages_failed=(), cost_usd_total=0.10),
+    )
+    runner = CliRunner()
+
+    # --quiet (level=warn): INFO phase header suppressed, but summary (print) still present
+    result_quiet = runner.invoke(app, ["--quiet", "bootstrap", "proj", "--wiki", str(tmp_path)])
+    assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
+    assert "starting bootstrap" not in result_quiet.stdout
+    assert "stages run 5" in result_quiet.stdout
+
+    # --verbose (level=debug): INFO phase header present
+    result_verbose = runner.invoke(app, ["--verbose", "bootstrap", "proj", "--wiki", str(tmp_path)])
+    assert result_verbose.exit_code == 0, result_verbose.stdout + result_verbose.stderr
+    assert "starting bootstrap" in result_verbose.stdout

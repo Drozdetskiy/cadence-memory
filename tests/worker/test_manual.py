@@ -13,6 +13,12 @@ from string import Template
 from cadence_memory.config.schema import Config, WorkerConfig
 from cadence_memory.executor.runner import ClaudeResult
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
+from cadence_memory.progress.events import (
+    ErrorEvent,
+    PhaseEndEvent,
+    PhaseStartEvent,
+    ProgressEvent,
+)
 from cadence_memory.worker.manual import (
     _TRUNCATION_LIMIT,
     _TRUNCATION_MARKER,
@@ -572,4 +578,179 @@ def test_manual_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> Non
     )
 
     assert len(runner.calls) == 1
-    assert runner.extra_kwargs == [{}]
+    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
+
+
+def test_manual_emits_phase_start_and_end_events(tmp_path: Path) -> None:
+    @dataclass
+    class _RecordingLogger:
+        events: list[ProgressEvent] = field(default_factory=list)
+
+        @property
+        def path(self) -> str | None:
+            return None
+
+        def print(self, fmt: str, *args: object) -> None:
+            pass
+
+        def info(self, fmt: str, *args: object) -> None:
+            pass
+
+        def warn(self, fmt: str, *args: object) -> None:
+            pass
+
+        def error(self, fmt: str, *args: object) -> None:
+            pass
+
+        def section(self, label: str) -> None:
+            pass
+
+        def log_event(self, event: ProgressEvent) -> None:
+            self.events.append(event)
+
+    wiki = _init_wiki(tmp_path)
+    src = _write_source(tmp_path)
+    runner = _FakeClaudeRunner()
+    recording = _RecordingLogger()
+
+    ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    starts = [e for e in recording.events if isinstance(e, PhaseStartEvent)]
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    assert len(starts) == 1
+    assert starts[0].phase == "manual-ingest"
+    assert len(ends) == 1
+    assert ends[0].phase == "manual-ingest"
+    assert ends[0].result == "ok"
+
+
+def test_manual_emits_error_event_on_runner_failure(tmp_path: Path) -> None:
+    @dataclass
+    class _RecordingLogger:
+        events: list[ProgressEvent] = field(default_factory=list)
+
+        @property
+        def path(self) -> str | None:
+            return None
+
+        def print(self, fmt: str, *args: object) -> None:
+            pass
+
+        def info(self, fmt: str, *args: object) -> None:
+            pass
+
+        def warn(self, fmt: str, *args: object) -> None:
+            pass
+
+        def error(self, fmt: str, *args: object) -> None:
+            pass
+
+        def section(self, label: str) -> None:
+            pass
+
+        def log_event(self, event: ProgressEvent) -> None:
+            self.events.append(event)
+
+    wiki = _init_wiki(tmp_path)
+    src = _write_source(tmp_path)
+
+    def fail(cwd: Path) -> ClaudeResult:
+        return ClaudeResult(
+            success=False,
+            final_text="",
+            cost_usd=0.01,
+            duration_ms=50,
+            tool_call_count=0,
+            error="boom",
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[fail])
+    recording = _RecordingLogger()
+
+    outcome = ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is False
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].phase == "manual-ingest"
+    assert "boom" in errors[0].message
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result == "failed"
+
+
+def test_manual_emits_error_event_on_frontmatter_error(tmp_path: Path) -> None:
+    @dataclass
+    class _RecordingLogger:
+        events: list[ProgressEvent] = field(default_factory=list)
+
+        @property
+        def path(self) -> str | None:
+            return None
+
+        def print(self, fmt: str, *args: object) -> None:
+            pass
+
+        def info(self, fmt: str, *args: object) -> None:
+            pass
+
+        def warn(self, fmt: str, *args: object) -> None:
+            pass
+
+        def error(self, fmt: str, *args: object) -> None:
+            pass
+
+        def section(self, label: str) -> None:
+            pass
+
+        def log_event(self, event: ProgressEvent) -> None:
+            self.events.append(event)
+
+    wiki = _init_wiki(tmp_path)
+    src = _write_source(tmp_path)
+
+    def write_bad_frontmatter(cwd: Path) -> ClaudeResult:
+        (cwd / "stub.md").write_text("no frontmatter here\n", encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="wrote",
+            cost_usd=0.02,
+            duration_ms=120,
+            tool_call_count=1,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_bad_frontmatter])
+    recording = _RecordingLogger()
+
+    outcome = ingest_file(
+        source_path=src,
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        clock=_fixed_clock(),
+        logger=recording,
+    )
+
+    assert outcome.success is False
+    errors = [e for e in recording.events if isinstance(e, ErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].phase == "manual-ingest"
+    assert errors[0].message == "frontmatter error"
+    ends = [e for e in recording.events if isinstance(e, PhaseEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result == "failed"

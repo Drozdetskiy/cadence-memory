@@ -216,3 +216,38 @@ def test_cli_list_invalid_format_exits_1(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "--format" in result.stderr
+
+
+def test_cli_repos_add_outcome_line_present(tmp_path: Path) -> None:
+    _scaffold(tmp_path)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app, ["repos", "add", "newrepo", "https://example.com/r.git", "--wiki", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a/b) outcome line present via logger.info
+    assert "added: newrepo" in result.stdout
+
+
+def test_cli_repos_quiet_suppresses_info(tmp_path: Path) -> None:
+    _scaffold(tmp_path)
+    runner = CliRunner()
+
+    # --quiet suppresses INFO outcome lines
+    result = runner.invoke(
+        app,
+        [
+            "--quiet",
+            "repos",
+            "add",
+            "quietrepo",
+            "https://example.com/q.git",
+            "--wiki",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "added: quietrepo" not in result.stdout
