@@ -28,6 +28,13 @@ worker:
   # Maximum number of commits to process in a single `worker run`.
   max_commits_per_run: 50
 
+# Progress logging. Uncomment to customize output format and structured sink.
+#progress:
+#  jsonl: false                              # write structured JSONL alongside stdout
+#  jsonl_path: .cadence-memory/progress.jsonl  # path for the JSONL sink
+#  color: auto                               # auto | always | never
+#  level: info                               # debug | info | warn | error
+
 # Tracked source repositories. Each entry becomes a `projects/<name>/` subtree.
 # Uncomment and edit the example below to add your first repo.
 repos: []

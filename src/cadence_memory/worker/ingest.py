@@ -20,6 +20,12 @@ from cadence_memory.git.walker import (
     SingleCommitEvent,
     event_head_sha,
 )
+from cadence_memory.progress.events import (
+    ErrorEvent,
+    IngestEndEvent,
+    IngestStartEvent,
+)
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.diff_budget import maybe_shard_diff, shard_noise_batch
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
@@ -27,6 +33,8 @@ from cadence_memory.worker.wiki_commit import (
     revert_wiki,
     stage_and_commit,
 )
+
+_NULL_LOGGER: Logger = NullLogger()
 
 _INDEX_HEAD_LINES = 60
 _LOG_TAIL_ENTRIES = 15
@@ -147,6 +155,7 @@ def ingest_event(
     cache: GitCache,
     prompt_template: str | None = None,
     clock: Callable[[], datetime] = _utc_now,
+    logger: Logger = _NULL_LOGGER,
 ) -> IngestOutcome:
     """Run a single ingest for `event` and return an `IngestOutcome`.
 
@@ -172,6 +181,7 @@ def ingest_event(
     durations: list[int] = []
     touched: tuple[Path, ...] = ()
     pre_dirty = frozenset(list_touched_paths(wiki_dir))
+    ingest_start = datetime.now(UTC)
 
     def _aggregated_cost() -> float | None:
         return sum(costs) if costs else None
@@ -179,12 +189,25 @@ def ingest_event(
     def _aggregated_duration() -> int | None:
         return sum(durations) if durations else None
 
+    def _wall_duration_ms() -> int:
+        return int((datetime.now(UTC) - ingest_start).total_seconds() * 1000)
+
+    logger.log_event(
+        IngestStartEvent(
+            repo=repo_cfg.name,
+            commit_sha=head_sha,
+            subject=subject,
+        )
+    )
+
     for idx, shard in enumerate(shards):
         is_final = idx == total - 1
         if not is_final:
             effective_subject = f"{subject} [shard {idx + 1} of {total} — do NOT append to log.md]"
         else:
             effective_subject = subject
+
+        logger.section(f"ingest {repo_cfg.name}@{short_sha} ({idx + 1}/{total})")
 
         rendered = _render_prompt(
             template_text,
@@ -205,6 +228,8 @@ def ingest_event(
             allowed_tools=WIKI_READWRITE,
             idle_timeout_s=config.idle_timeout_s,
             cwd=wiki_dir,
+            logger=logger,
+            phase=f"ingest-{short_sha}",
         )
         if result.cost_usd is not None:
             costs.append(result.cost_usd)
@@ -212,6 +237,12 @@ def ingest_event(
             durations.append(result.duration_ms)
 
         if not result.success:
+            logger.log_event(
+                ErrorEvent(
+                    phase="ingest",
+                    message=result.error or "claude run failed",
+                )
+            )
             revert_wiki(wiki_dir, preserve=pre_dirty)
             today_iso = clock().date().isoformat()
             append_log_failure(
@@ -221,6 +252,16 @@ def ingest_event(
                 subject=subject,
                 error=result.error or "claude run failed",
                 today_iso=today_iso,
+            )
+            logger.log_event(
+                IngestEndEvent(
+                    repo=repo_cfg.name,
+                    commit_sha=head_sha,
+                    duration_ms=_wall_duration_ms(),
+                    result="failed",
+                    pages_touched=0,
+                    cost_usd_estimate=_aggregated_cost(),
+                )
             )
             return IngestOutcome(
                 success=False,
@@ -239,6 +280,13 @@ def ingest_event(
             try:
                 parse_page(path)
             except FrontmatterError as exc:
+                logger.log_event(
+                    ErrorEvent(
+                        phase="ingest",
+                        message="frontmatter error",
+                        detail=str(exc),
+                    )
+                )
                 revert_wiki(wiki_dir, preserve=pre_dirty)
                 today_iso = clock().date().isoformat()
                 append_log_failure(
@@ -248,6 +296,16 @@ def ingest_event(
                     subject=subject,
                     error=str(exc),
                     today_iso=today_iso,
+                )
+                logger.log_event(
+                    IngestEndEvent(
+                        repo=repo_cfg.name,
+                        commit_sha=head_sha,
+                        duration_ms=_wall_duration_ms(),
+                        result="failed",
+                        pages_touched=0,
+                        cost_usd_estimate=_aggregated_cost(),
+                    )
                 )
                 return IngestOutcome(
                     success=False,
@@ -262,6 +320,17 @@ def ingest_event(
     wiki_sha = stage_and_commit(
         wiki_dir=wiki_dir,
         message=_commit_message(repo_cfg.name, short_sha, subject),
+    )
+
+    logger.log_event(
+        IngestEndEvent(
+            repo=repo_cfg.name,
+            commit_sha=head_sha,
+            duration_ms=_wall_duration_ms(),
+            result="ok",
+            pages_touched=len(touched),
+            cost_usd_estimate=_aggregated_cost(),
+        )
     )
 
     return IngestOutcome(

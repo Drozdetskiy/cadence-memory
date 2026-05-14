@@ -14,6 +14,14 @@ from cadence_memory.documents.frontmatter import FrontmatterError, parse_page
 from cadence_memory.executor.runner import ClaudeRunner
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
 from cadence_memory.git.cache import GitCache
+from cadence_memory.progress.events import (
+    ErrorEvent,
+    PhaseEndEvent,
+    PhaseStartEvent,
+    StageEndEvent,
+    StageStartEvent,
+)
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
     list_touched_paths,
@@ -28,6 +36,16 @@ _STAGE_FILES: dict[int, str] = {
     4: "bootstrap-4-gaps.txt",
     5: "bootstrap-5-plans.txt",
 }
+
+_STAGE_NAMES: dict[int, str] = {
+    1: "data-model",
+    2: "routes",
+    3: "architecture",
+    4: "gaps",
+    5: "plans",
+}
+
+_NULL_LOGGER: Logger = NullLogger()
 
 _PLANS_DIRS: tuple[str, ...] = ("plans", "todos", "docs/decisions", "ADR")
 
@@ -89,6 +107,7 @@ def run_bootstrap(
     runner: ClaudeRunner,
     stages: tuple[int, ...] = (1, 2, 3, 4, 5),
     clock: Callable[[], datetime] = _utc_now,
+    logger: Logger = _NULL_LOGGER,
 ) -> BootstrapOutcome:
     """Run the five-stage bootstrap for `repo_cfg` and return a `BootstrapOutcome`.
 
@@ -111,7 +130,16 @@ def run_bootstrap(
     plans_present = _detect_plans_dirs(repo_path)
     plans_directive_template = _PLANS_DIRECTIVE_INGEST if plans_present else _PLANS_DIRECTIVE_SKIP
 
+    phase_start = datetime.now(UTC)
+    logger.log_event(PhaseStartEvent("bootstrap", repo=repo_cfg.name, model=model))
+
     for stage in stages:
+        stage_name = _STAGE_NAMES[stage]
+        logger.section(f"bootstrap stage {stage}/{len(stages)}: {stage_name}")
+        logger.log_event(
+            StageStartEvent(stage_index=stage, stage_name=stage_name, repo=repo_cfg.name)
+        )
+
         pre_dirty = frozenset(list_touched_paths(wiki_dir))
         template_text = _load_stage_template(stage)
         today_iso = clock().date().isoformat()
@@ -132,6 +160,8 @@ def run_bootstrap(
             allowed_tools=WIKI_READWRITE,
             idle_timeout_s=config.idle_timeout_s,
             cwd=wiki_dir,
+            logger=logger,
+            phase=f"bootstrap-stage-{stage}",
         )
         if result.cost_usd is not None:
             cost_total += result.cost_usd
@@ -139,6 +169,12 @@ def run_bootstrap(
         subject = f"bootstrap-{stage}"
 
         if not result.success:
+            logger.log_event(
+                ErrorEvent(
+                    phase=f"bootstrap-stage-{stage}",
+                    message=result.error or "claude run failed",
+                )
+            )
             revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
@@ -149,6 +185,15 @@ def run_bootstrap(
                 today_iso=today_iso,
             )
             failed.append(stage)
+            logger.log_event(
+                StageEndEvent(
+                    stage_index=stage,
+                    duration_ms=result.duration_ms,
+                    result="failed",
+                    pages_touched=0,
+                    cost_usd_estimate=result.cost_usd,
+                )
+            )
             continue
 
         touched = list_touched_paths(wiki_dir)
@@ -163,6 +208,13 @@ def run_bootstrap(
                 break
 
         if frontmatter_error is not None:
+            logger.log_event(
+                ErrorEvent(
+                    phase=f"bootstrap-stage-{stage}",
+                    message="frontmatter error",
+                    detail=frontmatter_error,
+                )
+            )
             revert_wiki(wiki_dir, preserve=pre_dirty)
             append_log_failure(
                 wiki_dir=wiki_dir,
@@ -173,13 +225,43 @@ def run_bootstrap(
                 today_iso=today_iso,
             )
             failed.append(stage)
+            logger.log_event(
+                StageEndEvent(
+                    stage_index=stage,
+                    duration_ms=result.duration_ms,
+                    result="failed",
+                    pages_touched=0,
+                    cost_usd_estimate=result.cost_usd,
+                )
+            )
             continue
 
         stage_and_commit(
             wiki_dir=wiki_dir,
             message=f"cadence-memory: {subject} {repo_cfg.name} {short_sha}",
         )
-        pages_total += len(touched)
+        stage_pages = len(touched)
+        pages_total += stage_pages
+        logger.log_event(
+            StageEndEvent(
+                stage_index=stage,
+                duration_ms=result.duration_ms,
+                result="ok",
+                pages_touched=stage_pages,
+                cost_usd_estimate=result.cost_usd,
+            )
+        )
+
+    phase_duration_ms = int((datetime.now(UTC) - phase_start).total_seconds() * 1000)
+    result_str = "ok" if not failed else f"failed={len(failed)}"
+    logger.log_event(
+        PhaseEndEvent(
+            phase="bootstrap",
+            duration_ms=phase_duration_ms,
+            result=result_str,
+            cost_usd_estimate=cost_total if cost_total > 0.0 else None,
+        )
+    )
 
     return BootstrapOutcome(
         stages_run=tuple(stages),

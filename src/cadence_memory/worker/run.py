@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TextIO
 
 from cadence_memory.config.schema import Config
 from cadence_memory.executor.runner import ClaudeRunner
@@ -20,6 +18,8 @@ from cadence_memory.git.walker import (
     event_head_sha,
     iter_pending_commits,
 )
+from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent
+from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.ingest import ingest_event
 from cadence_memory.worker.state import (
     RepoState,
@@ -27,6 +27,8 @@ from cadence_memory.worker.state import (
     save_state,
     update_repo,
 )
+
+_NULL_LOGGER: Logger = NullLogger()
 
 _SUBJECT_MAX = 72
 _STATE_RELPATH = Path(".cadence-memory") / "state.json"
@@ -71,7 +73,7 @@ def run_pending(
     limit: int | None = None,
     dry_run: bool = False,
     clock: Callable[[], datetime] = _utc_now,
-    out: TextIO = sys.stdout,
+    logger: Logger = _NULL_LOGGER,
     should_stop_between_repos: Callable[[], bool] | None = None,
     should_stop_between_events: Callable[[], bool] | None = None,
 ) -> tuple[WorkerState, RunSummary]:
@@ -84,7 +86,7 @@ def run_pending(
     total_emitted = 0
 
     if dry_run:
-        out.write("plan:\n")
+        logger.info("plan:")
 
     per_repo_cap = config.worker.max_commits_per_run
 
@@ -107,7 +109,7 @@ def run_pending(
             cache.ensure(name=repo_cfg.name, url=repo_cfg.url, branch=repo_cfg.branch)
         except GitError as exc:
             if dry_run:
-                out.write(f"  {repo_cfg.name}: cache unavailable — {exc}\n")
+                logger.info("  %s: cache unavailable — %s", repo_cfg.name, exc)
             else:
                 state = update_repo(
                     state,
@@ -135,7 +137,7 @@ def run_pending(
             )
         except HistoryRewrittenError as exc:
             if dry_run:
-                out.write(f"  {repo_cfg.name}: history rewritten — needs reset\n")
+                logger.info("  %s: history rewritten — needs reset", repo_cfg.name)
             else:
                 state = update_repo(
                     state,
@@ -147,7 +149,7 @@ def run_pending(
             continue
         except GitError as exc:
             if dry_run:
-                out.write(f"  {repo_cfg.name}: cache read failed — {exc}\n")
+                logger.info("  %s: cache read failed — %s", repo_cfg.name, exc)
             else:
                 state = update_repo(
                     state,
@@ -161,14 +163,18 @@ def run_pending(
         visited_repos.append(repo_cfg.name)
 
         if dry_run:
-            out.write(f"  {repo_cfg.name}: {len(events)} pending events\n")
+            logger.info("  %s: %s pending events", repo_cfg.name, len(events))
             for event in events:
                 short = event_head_sha(event)[:7]
                 subject = _event_subject(event)[:_SUBJECT_MAX]
                 tag = _event_tag(event)
-                out.write(f"    {tag} {short} — {subject}\n")
+                logger.info("    %s %s — %s", tag, short, subject)
             total_emitted += len(events)
             continue
+
+        repo_start = datetime.now(UTC)
+        repo_failed = 0
+        logger.log_event(PhaseStartEvent("worker-run", repo=repo_cfg.name))
 
         for event in events:
             if should_stop_between_events is not None and should_stop_between_events():
@@ -181,6 +187,7 @@ def run_pending(
                 cache=cache,
                 runner=runner,
                 clock=clock,
+                logger=logger,
             )
             if outcome.cost_usd is not None:
                 cost_total += outcome.cost_usd
@@ -202,13 +209,20 @@ def run_pending(
                     last_failure=outcome.error or "unknown failure",
                 )
                 events_failed += 1
+                repo_failed += 1
             total_emitted += 1
             save_state(state_path, state)
             if not outcome.success and config.worker.stop_on_failure:
                 break
 
+        repo_duration_ms = int((datetime.now(UTC) - repo_start).total_seconds() * 1000)
+        repo_result = "ok" if repo_failed == 0 else f"failed={repo_failed}"
+        logger.log_event(
+            PhaseEndEvent("worker-run", duration_ms=repo_duration_ms, result=repo_result)
+        )
+
     if dry_run:
-        out.write(f"total: {total_emitted} events, model={config.model}\n")
+        logger.info("total: %s events, model=%s", total_emitted, config.model)
 
     summary = RunSummary(
         repos=tuple(visited_repos),

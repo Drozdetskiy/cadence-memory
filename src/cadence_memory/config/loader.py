@@ -9,13 +9,16 @@ from typing import cast
 import yaml
 
 from cadence_memory.config.errors import ConfigError
-from cadence_memory.config.schema import Config, RepoConfig, WorkerConfig
+from cadence_memory.config.schema import Config, ProgressConfig, RepoConfig, WorkerConfig
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 ALLOWED_TOP_KEYS = frozenset(
-    {"model", "budget_usd", "idle_timeout_s", "worker", "repos", "raw_auto_ingest"}
+    {"model", "budget_usd", "idle_timeout_s", "worker", "repos", "raw_auto_ingest", "progress"}
 )
+ALLOWED_PROGRESS_KEYS = frozenset({"jsonl", "jsonl_path", "color", "level"})
+_VALID_COLORS = frozenset({"auto", "always", "never"})
+_VALID_LEVELS = frozenset({"debug", "info", "warn", "error"})
 ALLOWED_WORKER_KEYS = frozenset(
     {
         "poll_interval_s",
@@ -60,6 +63,7 @@ def parse_config(data: dict[str, object], *, path: Path) -> Config:
     raw_auto_ingest = _require_bool(data.get("raw_auto_ingest", False), "raw_auto_ingest", path)
     worker = _parse_worker(data.get("worker"), path)
     repos = _parse_repos(data.get("repos"), path)
+    progress = _parse_progress(data.get("progress"), path)
 
     return Config(
         model=model,
@@ -68,6 +72,41 @@ def parse_config(data: dict[str, object], *, path: Path) -> Config:
         worker=worker,
         repos=repos,
         raw_auto_ingest=raw_auto_ingest,
+        progress=progress,
+    )
+
+
+def _parse_progress(value: object, path: Path) -> ProgressConfig:
+    if value is None:
+        return ProgressConfig()
+    if not isinstance(value, dict):
+        raise ConfigError(path, "progress: must be a mapping")
+    pdata = cast(dict[str, object], value)
+    unknown = set(pdata) - ALLOWED_PROGRESS_KEYS
+    if unknown:
+        raise ConfigError(path, f"progress: unknown key(s): {sorted(unknown, key=str)}")
+
+    jsonl_raw = pdata.get("jsonl", False)
+    if not isinstance(jsonl_raw, bool):
+        raise ConfigError(path, "progress.jsonl: must be a boolean")
+
+    jsonl_path_raw = pdata.get("jsonl_path", ".cadence-memory/progress.jsonl")
+    if not isinstance(jsonl_path_raw, str) or not jsonl_path_raw:
+        raise ConfigError(path, "progress.jsonl_path: must be a non-empty string")
+
+    color_raw = pdata.get("color", "auto")
+    if not isinstance(color_raw, str) or color_raw not in _VALID_COLORS:
+        raise ConfigError(path, f"progress.color: must be one of {sorted(_VALID_COLORS)}")
+
+    level_raw = pdata.get("level", "info")
+    if not isinstance(level_raw, str) or level_raw not in _VALID_LEVELS:
+        raise ConfigError(path, f"progress.level: must be one of {sorted(_VALID_LEVELS)}")
+
+    return ProgressConfig(
+        jsonl=jsonl_raw,
+        jsonl_path=jsonl_path_raw,
+        color=color_raw,
+        level=level_raw,
     )
 
 

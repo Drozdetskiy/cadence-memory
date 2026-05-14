@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cadence_memory.config import Config, ConfigError, RepoConfig, WorkerConfig
+from cadence_memory.config import Config, ConfigError, ProgressConfig, RepoConfig, WorkerConfig
 
 
 def test_config_is_frozen_with_slots() -> None:
@@ -34,6 +34,7 @@ def test_config_fields_present() -> None:
         "worker",
         "repos",
         "raw_auto_ingest",
+        "progress",
     }
 
 
@@ -69,6 +70,7 @@ def test_config_defaults() -> None:
     assert cfg.worker == WorkerConfig()
     assert cfg.repos == ()
     assert cfg.raw_auto_ingest is False
+    assert cfg.progress == ProgressConfig()
 
 
 def test_workerconfig_defaults() -> None:

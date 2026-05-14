@@ -22,6 +22,13 @@ def _scaffold(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _scaffold_with_color(tmp_path: Path) -> Path:
+    wiki = _scaffold(tmp_path)
+    config_path = wiki / "config.yaml"
+    config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return wiki
+
+
 @dataclass
 class _LintCall:
     kwargs: dict[str, Any]
@@ -244,3 +251,53 @@ def test_cli_lint_cost_and_sha_none_render_safely(
     assert "(n/a)" in result.stdout
     assert "None" not in result.stdout
     assert _BRANCH in result.stdout
+
+
+def test_cli_lint_phase_header_and_summary_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli.run_lint",
+        _fake_run_lint_factory(outcome=_success_outcome(cost_usd=0.05, sha=_OK_SHA)),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lint", "--wiki", str(wiki)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a) phase header
+    assert "running lint" in result.stdout
+    # (b) final summary present
+    assert "ok:" in result.stdout
+    assert _OK_SHA in result.stdout
+
+
+def test_cli_lint_no_color_strips_ansi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    wiki = _scaffold_with_color(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli.run_lint",
+        _fake_run_lint_factory(outcome=_success_outcome()),
+    )
+    runner = CliRunner()
+
+    result_color = runner.invoke(app, ["lint", "--wiki", str(wiki)])
+    assert "\x1b[" in result_color.stdout
+
+    result_plain = runner.invoke(app, ["--no-color", "lint", "--wiki", str(wiki)])
+    assert "\x1b[" not in result_plain.stdout
+    assert "ok:" in result_plain.stdout
+
+
+def test_cli_lint_quiet_suppresses_info(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    wiki = _scaffold(tmp_path)
+    monkeypatch.setattr(
+        "cadence_memory.cli.run_lint",
+        _fake_run_lint_factory(outcome=_success_outcome()),
+    )
+    runner = CliRunner()
+
+    result_quiet = runner.invoke(app, ["--quiet", "lint", "--wiki", str(wiki)])
+    assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
+    assert "running lint" not in result_quiet.stdout
+    assert "ok:" in result_quiet.stdout

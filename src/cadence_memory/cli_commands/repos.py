@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated
 
 import typer
 
+from cadence_memory.cli_state import get_overrides, make_logger
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.writer import add_repo, list_repos, remove_repo
+from cadence_memory.progress.logger import Logger
 from cadence_memory.wiki import WikiNotFoundError
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
 
@@ -25,13 +27,9 @@ def _resolve_config_path(wiki: Path | None) -> Path:
     return wiki_dir / CONFIG_FILENAME
 
 
-def _fail(message: str) -> NoReturn:
-    typer.echo(message, err=True)
-    raise typer.Exit(code=1)
-
-
 @repos_app.command("add")
 def cmd_add(
+    ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="Repo slug (used as projects/<name>/ subtree).")],
     url: Annotated[str, typer.Argument(help="Clone URL passed to `git clone`.")],
     branch: Annotated[str, typer.Option("--branch", help="Branch to track.")] = "main",
@@ -53,6 +51,7 @@ def cmd_add(
     ] = None,
 ) -> None:
     """Add a repo entry to the wiki's config.yaml."""
+    logger: Logger = make_logger(None, get_overrides(ctx))
     try:
         config_path = _resolve_config_path(wiki)
         add_repo(
@@ -65,12 +64,14 @@ def cmd_add(
             budget_usd=budget,
         )
     except (ConfigError, WikiNotFoundError) as exc:
-        _fail(str(exc))
-    typer.echo(f"added: {name}")
+        logger.error("%s", str(exc))
+        raise typer.Exit(code=1) from exc
+    logger.info("added: %s", name)
 
 
 @repos_app.command("list")
 def cmd_list(
+    ctx: typer.Context,
     format: Annotated[
         str, typer.Option("--format", help="Output format: table or json.")
     ] = "table",
@@ -80,18 +81,22 @@ def cmd_list(
     ] = None,
 ) -> None:
     """List repos tracked in the wiki's config.yaml."""
+    logger: Logger = make_logger(None, get_overrides(ctx))
     if format not in ("table", "json"):
-        _fail("--format must be table or json")
+        logger.error("--format must be table or json")
+        raise typer.Exit(code=1)
     try:
         config_path = _resolve_config_path(wiki)
         rendered = list_repos(config_path, format="json" if format == "json" else "table")
     except (ConfigError, WikiNotFoundError) as exc:
-        _fail(str(exc))
+        logger.error("%s", str(exc))
+        raise typer.Exit(code=1) from exc
     typer.echo(rendered)
 
 
 @repos_app.command("remove")
 def cmd_remove(
+    ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="Repo slug to remove from config.yaml.")],
     wiki: Annotated[
         Path | None,
@@ -99,12 +104,14 @@ def cmd_remove(
     ] = None,
 ) -> None:
     """Remove a repo entry from the wiki's config.yaml (state and history are preserved)."""
+    logger: Logger = make_logger(None, get_overrides(ctx))
     try:
         config_path = _resolve_config_path(wiki)
         remove_repo(config_path, name=name)
     except (ConfigError, WikiNotFoundError) as exc:
-        _fail(str(exc))
-    typer.echo(f"removed: {name}")
+        logger.error("%s", str(exc))
+        raise typer.Exit(code=1) from exc
+    logger.info("removed: %s", name)
 
 
 __all__ = ["repos_app"]

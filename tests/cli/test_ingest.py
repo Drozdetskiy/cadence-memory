@@ -21,6 +21,13 @@ def _scaffold(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _scaffold_with_color(tmp_path: Path) -> Path:
+    wiki = _scaffold(tmp_path)
+    config_path = wiki / "config.yaml"
+    config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return wiki
+
+
 def _write_source(wiki: Path, name: str = "article.md") -> Path:
     raw_dir = wiki / "raw" / "notes"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -275,3 +282,60 @@ def test_cli_ingest_exit_1_on_bad_config(tmp_path: Path) -> None:
     assert "invalid YAML" in result.stderr
     assert "Traceback" not in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_cli_ingest_phase_header_and_summary_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold(tmp_path)
+    src = _write_source(wiki)
+    outcome = _success_outcome(src, cost_usd=0.07, pages=(wiki / "learnings.md",))
+    monkeypatch.setattr(
+        "cadence_memory.cli.ingest_file", _fake_ingest_file_factory(outcome=outcome)
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["ingest", str(src), "--wiki", str(wiki)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a) phase header
+    assert "ingesting" in result.stdout
+    # (b) final summary present
+    assert "ok:" in result.stdout
+    assert "$0.07" in result.stdout
+
+
+def test_cli_ingest_no_color_strips_ansi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold_with_color(tmp_path)
+    src = _write_source(wiki)
+    outcome = _success_outcome(src)
+    monkeypatch.setattr(
+        "cadence_memory.cli.ingest_file", _fake_ingest_file_factory(outcome=outcome)
+    )
+    runner = CliRunner()
+
+    result_color = runner.invoke(app, ["ingest", str(src), "--wiki", str(wiki)])
+    assert "\x1b[" in result_color.stdout
+
+    result_plain = runner.invoke(app, ["--no-color", "ingest", str(src), "--wiki", str(wiki)])
+    assert "\x1b[" not in result_plain.stdout
+    assert "ok:" in result_plain.stdout
+
+
+def test_cli_ingest_quiet_suppresses_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki = _scaffold(tmp_path)
+    src = _write_source(wiki)
+    outcome = _success_outcome(src)
+    monkeypatch.setattr(
+        "cadence_memory.cli.ingest_file", _fake_ingest_file_factory(outcome=outcome)
+    )
+    runner = CliRunner()
+
+    result_quiet = runner.invoke(app, ["--quiet", "ingest", str(src), "--wiki", str(wiki)])
+    assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
+    assert "ingesting" not in result_quiet.stdout
+    assert "ok:" in result_quiet.stdout

@@ -9,11 +9,13 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from cadence_memory.cli_state import get_overrides, make_logger
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
 from cadence_memory.config.schema import Config
 from cadence_memory.executor.runner import DefaultClaudeRunner
 from cadence_memory.git.cache import DefaultGitCache
+from cadence_memory.progress.logger import Logger
 from cadence_memory.wiki import WikiNotFoundError
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
 from cadence_memory.worker.bootstrap import run_bootstrap
@@ -44,6 +46,7 @@ def _utc_now() -> datetime:
 
 @worker_app.command("run")
 def cmd_run(
+    ctx: typer.Context,
     mode: Annotated[
         str,
         typer.Option("--mode", help="Run mode: 'commits' (default) or 'bootstrap'."),
@@ -98,6 +101,9 @@ def cmd_run(
     except StateError as exc:
         _fail(str(exc))
 
+    overrides = get_overrides(ctx)
+    logger: Logger = make_logger(config, overrides, wiki_dir=wiki_dir)
+
     cache = DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")
     runner = DefaultClaudeRunner()
     lock_path = wiki_dir / ".cadence-memory" / "worker.lock"
@@ -108,6 +114,8 @@ def cmd_run(
         if repo_cfg is None:
             _fail(f"unknown repo: {only}", code=2)
 
+        logger.info("starting bootstrap for %s", only)
+
         try:
             with worker_lock(lock_path):
                 outcome = run_bootstrap(
@@ -116,6 +124,7 @@ def cmd_run(
                     wiki_dir=wiki_dir,
                     cache=cache,
                     runner=runner,
+                    logger=logger,
                 )
         except WorkerBusyError as exc:
             _fail(str(exc))
@@ -143,15 +152,18 @@ def cmd_run(
             )
         save_state(state_path, state)
 
-        typer.echo(
-            f"bootstrap {repo_cfg.name}: "
-            f"stages run {len(outcome.stages_run)}, "
-            f"failed {len(outcome.stages_failed)}, "
-            f"${outcome.cost_usd_total:.2f}"
+        logger.print(
+            "bootstrap %s: stages run %d, failed %d, $%.2f",
+            repo_cfg.name,
+            len(outcome.stages_run),
+            len(outcome.stages_failed),
+            outcome.cost_usd_total,
         )
         if outcome.stages_failed:
             raise typer.Exit(code=1)
         return
+
+    logger.info("starting worker run (mode=%s)", mode)
 
     try:
         with worker_lock(lock_path):
@@ -164,14 +176,16 @@ def cmd_run(
                 only_repo=only,
                 limit=limit,
                 dry_run=dry_run,
+                logger=logger,
             )
     except WorkerBusyError as exc:
         _fail(str(exc))
 
-    typer.echo(
-        f"processed {summary.events_processed}, "
-        f"failed {summary.events_failed}, "
-        f"${summary.cost_usd_total:.2f}"
+    logger.print(
+        "processed %d, failed %d, $%.2f",
+        summary.events_processed,
+        summary.events_failed,
+        summary.cost_usd_total,
     )
     if summary.events_failed:
         raise typer.Exit(code=1)
@@ -179,6 +193,7 @@ def cmd_run(
 
 @worker_app.command("daemon")
 def cmd_daemon(
+    ctx: typer.Context,
     once: Annotated[
         bool,
         typer.Option("--once", help="Run a single tick (equivalent to `worker run`) and exit."),
@@ -190,7 +205,7 @@ def cmd_daemon(
 ) -> None:
     """Long-running daemon that polls for new commits on a fixed interval."""
     if once:
-        cmd_run(mode="commits", only=None, limit=None, dry_run=False, wiki=wiki)
+        cmd_run(ctx, mode="commits", only=None, limit=None, dry_run=False, wiki=wiki)
         return
 
     try:
@@ -202,6 +217,10 @@ def cmd_daemon(
         config = load_config(wiki_dir / CONFIG_FILENAME)
     except ConfigError as exc:
         _fail(str(exc))
+
+    overrides = get_overrides(ctx)
+    logger: Logger = make_logger(config, overrides, wiki_dir=wiki_dir)
+    logger.info("starting daemon (poll_interval=%ds)", config.worker.poll_interval_s)
 
     def _config_factory() -> Config:
         return load_config(wiki_dir / CONFIG_FILENAME)
@@ -218,6 +237,7 @@ def cmd_daemon(
         cache_factory=_cache_factory,
         runner_factory=DefaultClaudeRunner,
         signals=signals,
+        logger=logger,
     )
 
     if signals.interrupt.is_set():

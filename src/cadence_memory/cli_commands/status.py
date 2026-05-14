@@ -11,11 +11,13 @@ from typing import Annotated
 
 import typer
 
+from cadence_memory.cli_state import get_overrides, make_logger
 from cadence_memory.config.errors import ConfigError
 from cadence_memory.config.loader import load_config
 from cadence_memory.config.schema import Config
 from cadence_memory.git.cache import DefaultGitCache, GitCache
 from cadence_memory.git.errors import GitError
+from cadence_memory.progress.logger import Logger
 from cadence_memory.wiki import WikiNotFoundError
 from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
 from cadence_memory.worker.pending import count_pending
@@ -174,6 +176,7 @@ def render_json(wiki_dir: Path, rows: tuple[RepoStatusRow, ...]) -> str:
 
 
 def cmd_status(
+    ctx: typer.Context,
     short: Annotated[
         bool,
         typer.Option("--short", help="Emit a single summary line (used by SessionStart hook)."),
@@ -188,44 +191,47 @@ def cmd_status(
     ] = None,
 ) -> None:
     """Print at-a-glance worker state for every tracked repo."""
+    overrides = get_overrides(ctx)
+    logger: Logger = make_logger(None, overrides)
+
     if format not in _VALID_FORMATS:
-        typer.echo(
-            f"error: --format must be one of {', '.join(_VALID_FORMATS)} (got {format!r})",
-            err=True,
+        logger.error(
+            "error: --format must be one of %s (got %r)",
+            ", ".join(_VALID_FORMATS),
+            format,
         )
         raise typer.Exit(code=2)
 
     if short and format == "json":
-        typer.echo(
-            "error: --short and --format json are incompatible output contracts",
-            err=True,
-        )
+        logger.error("error: --short and --format json are incompatible output contracts")
         raise typer.Exit(code=2)
 
     try:
         wiki_dir = resolve_wiki_dir(flag=wiki, env=dict(os.environ), cwd=Path.cwd())
     except WikiNotFoundError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
 
     try:
         cfg = load_config(wiki_dir / CONFIG_FILENAME)
     except ConfigError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
+
+    logger = make_logger(cfg, overrides, wiki_dir=wiki_dir)
 
     state_path = wiki_dir / ".cadence-memory" / "state.json"
     try:
         state = load_state(state_path)
     except StateError as exc:
-        typer.echo(str(exc), err=True)
+        logger.error("%s", str(exc))
         raise typer.Exit(code=1) from exc
 
     cache: GitCache = DefaultGitCache(root=wiki_dir / ".cadence-memory" / "git_cache")
     rows = build_rows(config=cfg, state=state, cache=cache)
 
     if short:
-        typer.echo(render_short(rows))
+        logger.print("%s", render_short(rows))
     elif format == "json":
         typer.echo(render_json(wiki_dir, rows))
     else:

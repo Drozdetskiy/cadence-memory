@@ -29,6 +29,13 @@ def _scaffold(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _scaffold_with_color(tmp_path: Path) -> Path:
+    _scaffold(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return tmp_path
+
+
 def _fake_run_pending(**_kwargs: Any) -> tuple[WorkerState, RunSummary]:
     return (
         WorkerState(),
@@ -156,3 +163,53 @@ def test_cli_daemon_exits_0_on_sigterm(tmp_path: Path, monkeypatch: pytest.Monke
     result = runner.invoke(app, ["worker", "daemon", "--wiki", str(tmp_path)])
 
     assert result.exit_code == 0, result.stdout + result.stderr
+
+
+def test_cli_daemon_phase_header_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _scaffold(tmp_path)
+
+    def fake_run_daemon(**kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr("cadence_memory.cli_commands.worker.run_daemon", fake_run_daemon)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["worker", "daemon", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    # (a) phase header
+    assert "starting daemon" in result.stdout
+
+
+def test_cli_daemon_no_color_strips_ansi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold_with_color(tmp_path)
+
+    def fake_run_daemon(**kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr("cadence_memory.cli_commands.worker.run_daemon", fake_run_daemon)
+    runner = CliRunner()
+
+    result_color = runner.invoke(app, ["worker", "daemon", "--wiki", str(tmp_path)])
+    assert "\x1b[" in result_color.stdout
+
+    result_plain = runner.invoke(app, ["--no-color", "worker", "daemon", "--wiki", str(tmp_path)])
+    assert "\x1b[" not in result_plain.stdout
+
+
+def test_cli_daemon_quiet_suppresses_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _scaffold(tmp_path)
+
+    def fake_run_daemon(**kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr("cadence_memory.cli_commands.worker.run_daemon", fake_run_daemon)
+    runner = CliRunner()
+
+    result_quiet = runner.invoke(app, ["--quiet", "worker", "daemon", "--wiki", str(tmp_path)])
+    assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
+    assert "starting daemon" not in result_quiet.stdout

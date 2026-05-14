@@ -13,6 +13,12 @@ from typing import Any
 import pytest
 
 from cadence_memory.config.schema import Config
+from cadence_memory.progress.events import (
+    ErrorEvent,
+    PhaseEndEvent,
+    PhaseStartEvent,
+    ProgressEvent,
+)
 from cadence_memory.worker.daemon import (
     EXIT_CLEAN,
     EXIT_SIGINT,
@@ -23,6 +29,34 @@ from cadence_memory.worker.daemon import (
 from cadence_memory.worker.lock import WorkerBusyError
 from cadence_memory.worker.run import RunSummary
 from cadence_memory.worker.state import RepoState, WorkerState
+
+
+@dataclass
+class _RecordingLogger:
+    events: list[ProgressEvent] = field(default_factory=list)
+    messages: list[str] = field(default_factory=list)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def print(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def info(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def warn(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def error(self, fmt: str, *args: object) -> None:
+        self.messages.append(fmt % args if args else fmt)
+
+    def section(self, label: str) -> None:
+        pass
+
+    def log_event(self, event: ProgressEvent) -> None:
+        self.events.append(event)
 
 
 def test_exit_code_constants() -> None:
@@ -202,7 +236,6 @@ def test_daemon_runs_one_iteration(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             signals=signals,
             sleep=sleep_calls.append,
             iterations=1,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -241,7 +274,6 @@ def test_daemon_respects_terminate_between_iterations(
             signals=signals,
             sleep=sleep_calls.append,
             iterations=None,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -277,7 +309,6 @@ def test_daemon_respects_interrupt_between_iterations(
             signals=signals,
             sleep=sleep_calls.append,
             iterations=None,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -304,7 +335,6 @@ def test_daemon_passes_should_stop_callbacks(
             signals=signals,
             sleep=lambda _s: None,
             iterations=1,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -346,7 +376,6 @@ def test_daemon_rereads_config_each_iteration(
             signals=signals,
             sleep=lambda _s: None,
             iterations=2,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -371,7 +400,7 @@ def test_daemon_swallows_unexpected_exception(
 
     fake = _FakeRunPending(side_effects=[boom, ok])
     monkeypatch.setattr("cadence_memory.worker.daemon.run_pending", fake)
-    logs: list[str] = []
+    recording = _RecordingLogger()
     restore, signals = _restoring_signals()
     try:
         run_daemon(
@@ -384,13 +413,19 @@ def test_daemon_swallows_unexpected_exception(
             signals=signals,
             sleep=lambda _s: None,
             iterations=2,
-            log=logs.append,
+            logger=recording,
         )
     finally:
         restore()
 
     assert len(fake.calls) == 2
-    assert any("unexpected error" in line for line in logs)
+    err_events = [
+        e
+        for e in recording.events
+        if isinstance(e, ErrorEvent) and e.phase == "daemon-tick"
+    ]
+    assert len(err_events) == 1
+    assert "unexpected error" in err_events[0].message
 
 
 def test_daemon_preserves_state_when_run_pending_raises(
@@ -420,7 +455,6 @@ def test_daemon_preserves_state_when_run_pending_raises(
             signals=signals,
             sleep=lambda _s: None,
             iterations=1,
-            log=lambda _msg: None,
         )
     finally:
         restore()
@@ -445,7 +479,7 @@ def test_daemon_swallows_worker_busy(tmp_path: Path, monkeypatch: pytest.MonkeyP
         yield
 
     monkeypatch.setattr("cadence_memory.worker.daemon.worker_lock", fake_lock)
-    logs: list[str] = []
+    recording = _RecordingLogger()
     restore, signals = _restoring_signals()
     try:
         run_daemon(
@@ -458,10 +492,45 @@ def test_daemon_swallows_worker_busy(tmp_path: Path, monkeypatch: pytest.MonkeyP
             signals=signals,
             sleep=lambda _s: None,
             iterations=2,
-            log=logs.append,
+            logger=recording,
         )
     finally:
         restore()
 
     assert len(fake.calls) == 1
-    assert any("skipping this tick" in line for line in logs)
+    assert any("skipping this tick" in msg for msg in recording.messages)
+
+
+def test_daemon_emits_phase_start_end_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wiki, state_path = _scaffold_wiki(tmp_path)
+    fake = _FakeRunPending()
+    monkeypatch.setattr("cadence_memory.worker.daemon.run_pending", fake)
+    recording = _RecordingLogger()
+    restore, signals = _restoring_signals()
+    try:
+        run_daemon(
+            wiki_dir=wiki,
+            poll_interval_s=0,
+            config_factory=_empty_config,
+            state_path=state_path,
+            cache_factory=lambda: object(),  # type: ignore[arg-type, return-value]
+            runner_factory=lambda: object(),  # type: ignore[arg-type, return-value]
+            signals=signals,
+            sleep=lambda _s: None,
+            iterations=1,
+            logger=recording,
+        )
+    finally:
+        restore()
+
+    starts = [
+        e for e in recording.events if isinstance(e, PhaseStartEvent) and e.phase == "daemon-tick"
+    ]
+    ends = [
+        e for e in recording.events if isinstance(e, PhaseEndEvent) and e.phase == "daemon-tick"
+    ]
+    assert len(starts) == 1
+    assert len(ends) == 1
+    assert ends[0].result == "ok"
