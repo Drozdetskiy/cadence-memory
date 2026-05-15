@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.4 — unreleased
+## v0.5.0 — 2026-05-15
 
 ### New
 - Automatic monthly rotation of `log.md` once it exceeds 100 entries; older months are archived to `log/YYYY-MM.md`. New `cadence-memory log rotate` command for manual triggering (with `--dry-run`).
@@ -14,6 +14,7 @@
 
 ### Changed
 - The YAML loader now warns on unknown keys instead of raising `ConfigError`. Malformed values on *known* keys still error. This makes schema removals non-breaking and surfaces typos as warnings.
+- Scaffolded wiki defaults are back in sync with current usage: the seeded `.gitignore` excludes `.DS_Store`, `.claude/settings.local.json`, and `raw/notes/`; the seeded `CLAUDE.md` query protocol directs Claude to invoke the `wiki-researcher` skill in parallel with `rg`/`qmd` for substantive questions; the seeded `index.md` raw drop-zone description matches the new gitignore policy.
 
 ### Removed
 - `RepoConfig.exclude` and `Config.raw_auto_ingest`. Neither was ever read at runtime.
