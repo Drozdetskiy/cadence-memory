@@ -185,6 +185,8 @@ def run_lint(
 
     touched = list_touched_paths(wiki_dir)
     for path in touched:
+        if path in pre_dirty:
+            continue
         if path.suffix != ".md" or not path.is_file():
             continue
         try:

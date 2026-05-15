@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1 — 2026-05-15
+
+### Fixes
+- Post-Claude validation now ignores files the user had dirty before the ingest started, so non-wiki user files (e.g. `CLAUDE.md`, raw drop-zone notes) no longer cause a spurious worker failure.
+- The auto-generated failure commit now stages only `log.md`, so pre-existing user edits are no longer bundled into a worker commit.
+
 ## v0.5.0 — 2026-05-15
 
 ### New

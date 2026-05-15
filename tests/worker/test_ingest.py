@@ -405,6 +405,75 @@ def test_invalid_frontmatter_reverts(tmp_path: Path) -> None:
     assert "FAILED ingest | project-a" in log_text
 
 
+def test_validation_skips_pre_dirty_markdown(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    # User leaves a non-wiki markdown file dirty before the worker runs.
+    (wiki / "CLAUDE.md").write_text("user notes, no frontmatter\n", encoding="utf-8")
+
+    def write_good(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "overview.md").write_text(_VALID_PAGE, encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="wrote",
+            cost_usd=0.03,
+            duration_ms=400,
+            tool_call_count=2,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_good])
+    cache = _FakeGitCache()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.success is True
+    assert outcome.wiki_commit_sha is not None
+    log_text = (wiki / "log.md").read_text(encoding="utf-8")
+    assert "FAILED ingest" not in log_text
+
+
+def test_validation_still_catches_claude_authored_bad_md(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+
+    def write_bad(cwd: Path) -> ClaudeResult:
+        (cwd / "stub.md").write_text("no frontmatter here\n", encoding="utf-8")
+        return ClaudeResult(
+            success=True,
+            final_text="wrote",
+            cost_usd=0.02,
+            duration_ms=120,
+            tool_call_count=1,
+            error=None,
+        )
+
+    runner = _FakeClaudeRunner(side_effects=[write_bad])
+    cache = _FakeGitCache()
+
+    outcome = ingest_event(
+        event=_single_event(),
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        runner=runner,
+        cache=cache,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.success is False
+    assert outcome.error is not None
+    assert "frontmatter" in outcome.error.lower() or "yaml" in outcome.error.lower()
+
+
 def test_head_sha_populated_on_failure(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     runner = _FakeClaudeRunner(
