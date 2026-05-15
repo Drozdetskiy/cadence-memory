@@ -497,6 +497,76 @@ def test_frontmatter_violation_marks_stage_failed_continues(tmp_path: Path) -> N
     assert "bootstrap-1" in log_text
 
 
+def test_validation_skips_pre_dirty_markdown(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    # User leaves a non-wiki markdown file dirty before bootstrap runs.
+    (wiki / "CLAUDE.md").write_text("user notes, no frontmatter\n", encoding="utf-8")
+
+    def write_good_page(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "good.md").write_text(_VALID_PAGE, encoding="utf-8")
+        return _success_result()
+
+    runner = _make_runner(
+        side_effects=[
+            write_good_page,
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+        ]
+    )
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    outcome = run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.stages_failed == ()
+    log_text = (wiki / "log.md").read_text(encoding="utf-8")
+    assert "FAILED ingest" not in log_text
+
+
+def test_bootstrap_validation_still_catches_claude_authored_bad_md(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+
+    def write_bad_page(cwd: Path) -> ClaudeResult:
+        (cwd / "projects").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a").mkdir(exist_ok=True)
+        (cwd / "projects" / "project-a" / "bad.md").write_text("no frontmatter\n", encoding="utf-8")
+        return _success_result()
+
+    runner = _make_runner(
+        side_effects=[
+            write_bad_page,
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+            lambda cwd: _success_result(),
+        ]
+    )
+    cache = _FakeGitCache(clone_result=_clone(tmp_path))
+
+    outcome = run_bootstrap(
+        repo_cfg=_repo_cfg(),
+        config=_config(),
+        wiki_dir=wiki,
+        cache=cache,
+        runner=runner,
+        clock=_fixed_clock(),
+    )
+
+    assert outcome.stages_failed == (1,)
+    log_text = (wiki / "log.md").read_text(encoding="utf-8")
+    assert "FAILED ingest | project-a" in log_text
+
+
 def test_head_sha_taken_from_clone_result(tmp_path: Path) -> None:
     wiki = _init_wiki(tmp_path)
     head_sha = "9" * 40

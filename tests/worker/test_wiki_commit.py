@@ -13,6 +13,7 @@ from cadence_memory.worker.wiki_commit import (
     list_touched_paths,
     revert_wiki,
     stage_and_commit,
+    stage_and_commit_paths,
 )
 
 
@@ -195,6 +196,89 @@ def test_revert_preserves_subset_when_claude_also_touches_same_file(tmp_path: Pa
     revert_wiki(wiki, preserve=frozenset({(wiki / "index.md").resolve()}))
 
     assert (wiki / "index.md").read_text(encoding="utf-8") == "claude further edit\n"
+
+
+def test_stage_and_commit_paths_raises_on_git_failure(tmp_path: Path) -> None:
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+    (not_a_repo / "log.md").write_text("# log\n", encoding="utf-8")
+    with pytest.raises(WikiCommitError):
+        stage_and_commit_paths(
+            wiki_dir=not_a_repo,
+            paths=[not_a_repo / "log.md"],
+            message="boom",
+        )
+
+
+def test_stage_and_commit_paths_returns_sha_on_change(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "log.md").write_text("# log\nappended\n", encoding="utf-8")
+
+    sha = stage_and_commit_paths(
+        wiki_dir=wiki,
+        paths=[wiki / "log.md"],
+        message="log only",
+    )
+
+    assert sha is not None
+    assert len(sha) == 40
+    head = _git("rev-parse", "HEAD", cwd=wiki).stdout.strip()
+    assert head == sha
+
+
+def test_stage_and_commit_paths_does_not_stage_other_dirty_files(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / "index.md").write_text("# index modified\n", encoding="utf-8")
+    (wiki / "log.md").write_text("# log\nentry\n", encoding="utf-8")
+
+    sha = stage_and_commit_paths(
+        wiki_dir=wiki,
+        paths=[wiki / "log.md"],
+        message="log only",
+    )
+
+    assert sha is not None
+    files = _git("show", "--name-only", "--pretty=", "HEAD", cwd=wiki).stdout.split()
+    assert files == ["log.md"]
+    status = _git("status", "--porcelain", cwd=wiki).stdout.strip()
+    assert "index.md" in status
+    assert "log.md" not in status
+
+
+def test_failure_commit_includes_only_log_md(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    (wiki / ".gitignore").write_text(".DS_Store\n", encoding="utf-8")
+    (wiki / "CLAUDE.md").write_text("# user notes\n", encoding="utf-8")
+
+    append_log_failure(
+        wiki_dir=wiki,
+        repo_name="proj-a",
+        short_sha="abc1234",
+        subject="something broke",
+        error="boom traceback",
+        today_iso="2026-05-15",
+    )
+
+    files = _git("show", "--name-only", "--pretty=", "HEAD", cwd=wiki).stdout.split()
+    assert files == ["log.md"]
+    status = _git("status", "--porcelain", cwd=wiki).stdout
+    assert ".gitignore" in status
+    assert "CLAUDE.md" in status
+
+
+def test_failure_commit_returns_none_when_log_unchanged(tmp_path: Path) -> None:
+    wiki = _init_wiki(tmp_path)
+    head_before = _git("rev-parse", "HEAD", cwd=wiki).stdout.strip()
+
+    result = stage_and_commit_paths(
+        wiki_dir=wiki,
+        paths=[wiki / "log.md"],
+        message="noop",
+    )
+
+    assert result is None
+    head_after = _git("rev-parse", "HEAD", cwd=wiki).stdout.strip()
+    assert head_before == head_after
 
 
 def test_append_log_failure_commits_entry(tmp_path: Path) -> None:

@@ -49,6 +49,29 @@ def stage_and_commit(*, wiki_dir: Path, message: str) -> str | None:
     return head.stdout.strip()
 
 
+def stage_and_commit_paths(*, wiki_dir: Path, paths: list[Path], message: str) -> str | None:
+    """Stage only `paths` in `wiki_dir`, commit if anything is staged, return the new HEAD sha.
+
+    Each path is converted to a wiki-relative string via
+    ``path.relative_to(wiki_dir)`` before being passed to ``git add --``.
+    Returns ``None`` when nothing is staged. Raises ``WikiCommitError`` on
+    unexpected git failures.
+    """
+    rels = [str(path.relative_to(wiki_dir)) for path in paths]
+    _run_checked(["git", "add", "--", *rels], cwd=wiki_dir)
+    diff_cached = _run(["git", "diff", "--cached", "--quiet"], cwd=wiki_dir)
+    if diff_cached.returncode == 0:
+        return None
+    if diff_cached.returncode != 1:
+        stderr = (diff_cached.stderr or "").strip()
+        raise WikiCommitError(
+            f"git diff --cached --quiet failed (rc={diff_cached.returncode}): {stderr}"
+        )
+    _run_checked(["git", "commit", "-m", message], cwd=wiki_dir)
+    head = _run_checked(["git", "rev-parse", "HEAD"], cwd=wiki_dir)
+    return head.stdout.strip()
+
+
 _TOUCHED_PREFIXES: frozenset[str] = frozenset({"??", " M", "M ", "A ", "AM", "MM"})
 
 
@@ -147,8 +170,9 @@ def append_log_failure(
     entry = f"\n## [{today_iso}] FAILED ingest | {repo_name} {short_sha} — {subject}\n\n{error}\n"
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write(entry)
-    stage_and_commit(
+    stage_and_commit_paths(
         wiki_dir=wiki_dir,
+        paths=[log_path],
         message=f"cadence-memory: ingest failure {repo_name} {short_sha}",
     )
 
@@ -159,4 +183,5 @@ __all__ = [
     "list_touched_paths",
     "revert_wiki",
     "stage_and_commit",
+    "stage_and_commit_paths",
 ]
