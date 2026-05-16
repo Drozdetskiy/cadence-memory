@@ -504,9 +504,9 @@ def test_rotate_log_tail_compat_after_rotation(tmp_path: Path) -> None:
     content = _make_log_content(_LOG_FM, {"2026-03": 200})
     wiki = _init_wiki_fs(tmp_path, content)
     rotate_log(wiki_dir=wiki, clock=_clock_fixed(2026, 5, 14))
-    from cadence_memory.worker.ingest import _log_tail
+    from cadence_memory.worker.prompt_context import log_tail
 
-    tail = _log_tail(wiki)
+    tail = log_tail(wiki)
     entry_headers = [line for line in tail.splitlines() if line.startswith("## ")]
     assert len(entry_headers) == 15
 
