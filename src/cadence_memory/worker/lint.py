@@ -17,6 +17,7 @@ from cadence_memory.executor.tool_sets import WIKI_READWRITE
 from cadence_memory.progress.events import ErrorEvent, PhaseEndEvent, PhaseStartEvent
 from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.wiki.branch import create_or_switch_branch
+from cadence_memory.worker.prompt_context import index_head, log_tail
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
     list_touched_paths,
@@ -25,10 +26,6 @@ from cadence_memory.worker.wiki_commit import (
 )
 
 _NULL_LOGGER: Logger = NullLogger()
-
-# duplication intentional — see TASK 1016
-_INDEX_HEAD_LINES = 60
-_LOG_TAIL_ENTRIES = 15
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,29 +39,6 @@ class LintOutcome:
     wiki_commit_sha: str | None
     cost_usd: float | None
     error: str | None
-
-
-# duplication intentional — see TASK 1016
-def _index_head(wiki_dir: Path, *, max_lines: int = _INDEX_HEAD_LINES) -> str:
-    path = wiki_dir / "index.md"
-    if not path.is_file():
-        return ""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return "\n".join(lines[:max_lines])
-
-
-# duplication intentional — see TASK 1016
-def _log_tail(wiki_dir: Path, *, max_entries: int = _LOG_TAIL_ENTRIES) -> str:
-    path = wiki_dir / "log.md"
-    if not path.is_file():
-        return ""
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    entry_starts: list[int] = [i for i, line in enumerate(lines) if line.startswith("## ")]
-    if not entry_starts:
-        return ""
-    start_idx = entry_starts[-max_entries] if len(entry_starts) > max_entries else entry_starts[0]
-    return "\n".join(lines[start_idx:])
 
 
 def _load_default_template() -> str:
@@ -130,8 +104,8 @@ def run_lint(
     rendered = Template(template_text).substitute(
         wiki_root=str(wiki_dir),
         today=today_iso,
-        pages_index_excerpt=_index_head(wiki_dir),
-        recent_log_tail=_log_tail(wiki_dir),
+        pages_index_excerpt=index_head(wiki_dir),
+        recent_log_tail=log_tail(wiki_dir),
         scope_hint=_scope_hint(only_repo),
     )
 

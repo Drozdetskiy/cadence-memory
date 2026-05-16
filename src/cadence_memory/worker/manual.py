@@ -15,6 +15,7 @@ from cadence_memory.executor.runner import ClaudeRunner
 from cadence_memory.executor.tool_sets import WIKI_READWRITE
 from cadence_memory.progress.events import ErrorEvent, PhaseEndEvent, PhaseStartEvent
 from cadence_memory.progress.logger import Logger, NullLogger
+from cadence_memory.worker.prompt_context import index_head, log_tail
 from cadence_memory.worker.wiki_commit import (
     append_log_failure,
     list_touched_paths,
@@ -23,10 +24,6 @@ from cadence_memory.worker.wiki_commit import (
 )
 
 _NULL_LOGGER: Logger = NullLogger()
-
-# duplication intentional — see TASK 1016
-_INDEX_HEAD_LINES = 60
-_LOG_TAIL_ENTRIES = 15
 
 _TRUNCATION_LIMIT = 250 * 1024
 _TRUNCATION_MARKER = "\n\n[truncated by cadence-memory at 250 KB]\n"
@@ -72,29 +69,6 @@ def _read_source(path: Path) -> str:
     return text
 
 
-# duplication intentional — see TASK 1016
-def _index_head(wiki_dir: Path, *, max_lines: int = _INDEX_HEAD_LINES) -> str:
-    path = wiki_dir / "index.md"
-    if not path.is_file():
-        return ""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return "\n".join(lines[:max_lines])
-
-
-# duplication intentional — see TASK 1016
-def _log_tail(wiki_dir: Path, *, max_entries: int = _LOG_TAIL_ENTRIES) -> str:
-    path = wiki_dir / "log.md"
-    if not path.is_file():
-        return ""
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    entry_starts: list[int] = [i for i, line in enumerate(lines) if line.startswith("## ")]
-    if not entry_starts:
-        return ""
-    start_idx = entry_starts[-max_entries] if len(entry_starts) > max_entries else entry_starts[0]
-    return "\n".join(lines[start_idx:])
-
-
 def _load_default_template() -> str:
     resource = files("cadence_memory.defaults").joinpath("prompts/manual-ingest.txt")
     return resource.read_text(encoding="utf-8")
@@ -129,8 +103,8 @@ def ingest_file(
 
     source_kind = sniff_source_kind(source_path)
     source_content = _read_source(source_path)
-    index_head = _index_head(wiki_dir)
-    log_tail = _log_tail(wiki_dir)
+    index_head_text = index_head(wiki_dir)
+    log_tail_text = log_tail(wiki_dir)
     wiki_root = str(wiki_dir)
 
     pre_dirty = frozenset(list_touched_paths(wiki_dir))
@@ -140,8 +114,8 @@ def ingest_file(
         source_path=str(source_path),
         source_kind=source_kind,
         source_content=source_content,
-        index_head=index_head,
-        log_tail=log_tail,
+        index_head=index_head_text,
+        log_tail=log_tail_text,
     )
 
     phase_start = datetime.now(UTC)
