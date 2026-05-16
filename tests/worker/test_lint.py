@@ -142,7 +142,6 @@ def _init_wiki(tmp_path: Path) -> Path:
 def _config(**overrides: object) -> Config:
     base: dict[str, object] = {
         "model": "claude-sonnet-4-6",
-        "budget_usd": 0.5,
         "idle_timeout_s": 300,
         "worker": WorkerConfig(),
         "repos": (),
@@ -435,7 +434,7 @@ def test_runner_called_with_wiki_readwrite_and_config_defaults(tmp_path: Path) -
 
     run_lint(
         wiki_dir=wiki,
-        config=_config(model="claude-opus-4-7", budget_usd=1.5, idle_timeout_s=600),
+        config=_config(model="claude-opus-4-7", idle_timeout_s=600),
         runner=runner,
         clock=_fixed_clock(),
     )
@@ -608,21 +607,6 @@ def test_lint_outcome_is_frozen_slots() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         outcome.success = False  # type: ignore[misc]
     assert not hasattr(outcome, "__dict__")
-
-
-def test_lint_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    runner = _FakeClaudeRunner()
-
-    run_lint(
-        wiki_dir=wiki,
-        config=_config(budget_usd=0.5),
-        runner=runner,
-        clock=_fixed_clock(),
-    )
-
-    assert len(runner.calls) == 1
-    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
 
 
 def test_lint_emits_phase_start_and_end_events(tmp_path: Path) -> None:

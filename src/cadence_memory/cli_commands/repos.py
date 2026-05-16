@@ -41,10 +41,6 @@ def cmd_add(
         str | None,
         typer.Option("--model", help="Override the wiki-wide Claude model for this repo."),
     ] = None,
-    budget: Annotated[
-        float | None,
-        typer.Option("--budget", help="Per-repo USD budget cap (overrides wiki default)."),
-    ] = None,
     wiki: Annotated[
         Path | None,
         typer.Option("--wiki", help="Wiki directory (defaults to walk-up from cwd)."),
@@ -61,7 +57,6 @@ def cmd_add(
             branch=branch,
             start_commit=start_commit,
             model=model,
-            budget_usd=budget,
             logger=logger,
         )
     except (ConfigError, WikiNotFoundError) as exc:

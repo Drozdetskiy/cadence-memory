@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.2 — 2026-05-16
+
+### Removed
+- `Config.budget_usd` and `RepoConfig.budget_usd`. Neither was read at runtime; deprecated in v0.4.3.
+
 ## v0.5.1 — 2026-05-15
 
 ### Fixes

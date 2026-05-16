@@ -35,7 +35,6 @@ class RepoConfig:
     branch: str = "main"
     start_commit: str | None = None
     model: str | None = None
-    budget_usd: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +42,6 @@ class Config:
     """Top-level v2 config (design2 §5)."""
 
     model: str = "claude-sonnet-4-6"
-    budget_usd: float | None = 0.50
     idle_timeout_s: int = 300
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     repos: tuple[RepoConfig, ...] = ()

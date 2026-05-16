@@ -1,5 +1,4 @@
 model: claude-sonnet-4-6
-budget_usd: 0.50
 idle_timeout_s: 300
 
 worker:
@@ -19,7 +18,6 @@ repos:
     branch: main
     start_commit: abc1234
     model: claude-opus-4-7
-    budget_usd: 1.00
 
   - name: project-b
     url: https://github.com/org/project-b

@@ -234,7 +234,6 @@ def _repo_cfg(name: str = "project-a", **overrides: object) -> RepoConfig:
 def _config(*, repos: tuple[RepoConfig, ...] = (), **overrides: object) -> Config:
     base: dict[str, object] = {
         "model": "claude-sonnet-4-6",
-        "budget_usd": 0.5,
         "idle_timeout_s": 300,
         "worker": WorkerConfig(),
         "repos": repos,
@@ -1019,28 +1018,6 @@ def test_run_returns_runsummary_dataclass(tmp_path: Path) -> None:
     assert summary.events_processed == 0
     assert summary.events_failed == 0
     assert summary.cost_usd_total == 0.0
-
-
-def test_dry_run_budget_usd_in_config_does_not_appear_in_summary(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    commits = (_commit("a" * 40, "feat: one"),)
-    cache = _FakeGitCache(commits_by_repo={"project-a": commits})
-    runner = _FakeClaudeRunner()
-    config = _config(repos=(_repo_cfg(),), budget_usd=0.5)
-    recording = _RecordingLogger()
-
-    run_pending(
-        wiki_dir=wiki,
-        config=config,
-        state=WorkerState(),
-        cache=cache,
-        runner=runner,
-        dry_run=True,
-        clock=_fixed_clock(),
-        logger=recording,
-    )
-
-    assert "budget" not in " ".join(recording.messages)
 
 
 def test_run_emits_phase_start_end_events_per_repo(tmp_path: Path) -> None:
