@@ -151,7 +151,6 @@ def test_add_preserves_unrelated_keys_byte_for_byte(tmp_path: Path) -> None:
     body = """\
 # top comment
 model: "claude-sonnet-4-6"
-budget_usd: 0.5
 worker:
   poll_interval_s: 3600
   noise_subject_patterns:
@@ -212,22 +211,6 @@ def test_add_invalid_slug_raises_config_error(tmp_path: Path, bad_name: str) -> 
         add_repo(cfg, name=bad_name, url="git@github.com:org/x.git")
 
 
-def test_add_negative_budget_does_not_corrupt_config(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    original = "model: claude-sonnet-4-6\n"
-    _write(cfg, original)
-
-    with pytest.raises(ConfigError, match=">= 0"):
-        add_repo(
-            cfg,
-            name="alpha",
-            url="git@github.com:org/alpha.git",
-            budget_usd=-1.0,
-        )
-
-    assert cfg.read_text(encoding="utf-8") == original
-
-
 def test_add_empty_url_does_not_corrupt_config(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"
     original = "model: claude-sonnet-4-6\n"
@@ -266,7 +249,6 @@ def test_add_passes_strict_loader_after_write(tmp_path: Path) -> None:
         branch="dev",
         start_commit="abc123",
         model="claude-opus-4-7",
-        budget_usd=1.25,
     )
 
     from cadence_memory.config.loader import load_config
@@ -278,7 +260,6 @@ def test_add_passes_strict_loader_after_write(tmp_path: Path) -> None:
     assert repo.branch == "dev"
     assert repo.start_commit == "abc123"
     assert repo.model == "claude-opus-4-7"
-    assert repo.budget_usd == 1.25
 
 
 def test_remove_existing_repo(tmp_path: Path) -> None:

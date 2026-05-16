@@ -206,18 +206,6 @@ def test_default_runner_satisfies_protocol() -> None:
         assert impl_params[name].kind == protocol_param.kind
 
 
-def test_default_runner_does_not_forward_budget_usd() -> None:
-    fake = FakeStreamingRunner(_ok_result())
-    runner = DefaultClaudeRunner(streaming=fake)
-    runner.run(
-        prompt="p",
-        model="m",
-        allowed_tools=(),
-        idle_timeout_s=300,
-    )
-    assert "budget_usd" not in fake.captured_extra_kwargs
-
-
 def test_default_runner_forwards_null_logger_by_default() -> None:
     fake = FakeStreamingRunner(_ok_result())
     runner = DefaultClaudeRunner(streaming=fake)

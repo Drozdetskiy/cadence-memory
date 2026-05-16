@@ -207,7 +207,6 @@ def _repo_cfg(**overrides: object) -> RepoConfig:
 def _config(**overrides: object) -> Config:
     base: dict[str, object] = {
         "model": "claude-sonnet-4-6",
-        "budget_usd": 0.5,
         "idle_timeout_s": 300,
         "worker": WorkerConfig(),
         "repos": (),
@@ -745,25 +744,6 @@ def test_bootstrap_reverts_claude_changes_on_runner_failure(tmp_path: Path) -> N
 
     assert 1 in outcome.stages_failed
     assert not (wiki / "claude_new.md").exists()
-
-
-def test_bootstrap_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    runner = _FakeClaudeRunner()
-    cache = _FakeGitCache(clone_result=_clone(tmp_path))
-
-    run_bootstrap(
-        repo_cfg=_repo_cfg(budget_usd=1.25),
-        config=_config(budget_usd=0.5),
-        wiki_dir=wiki,
-        cache=cache,
-        runner=runner,
-        stages=(1,),
-        clock=_fixed_clock(),
-    )
-
-    assert len(runner.calls) == 1
-    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
 
 
 @dataclass

@@ -51,7 +51,6 @@ class _RecordingLogger:
 def test_minimal_loads() -> None:
     cfg = load_config(FIXTURES / "minimal.yaml")
     assert cfg.model == "claude-sonnet-4-6"
-    assert cfg.budget_usd == 0.50
     assert cfg.idle_timeout_s == 300
     assert cfg.worker == WorkerConfig()
     assert cfg.repos == (RepoConfig(name="project-a", url="git@github.com:org/a.git"),)
@@ -60,7 +59,6 @@ def test_minimal_loads() -> None:
 def test_full_loads() -> None:
     cfg = load_config(FIXTURES / "full.yaml")
     assert cfg.model == "claude-sonnet-4-6"
-    assert cfg.budget_usd == 0.50
     assert cfg.idle_timeout_s == 300
 
     expected_worker = WorkerConfig(
@@ -85,7 +83,6 @@ def test_full_loads() -> None:
         branch="main",
         start_commit="abc1234",
         model="claude-opus-4-7",
-        budget_usd=1.00,
     )
     assert cfg.repos[1] == RepoConfig(
         name="project-b",
@@ -169,22 +166,6 @@ def test_invalid_regex_errors() -> None:
         parse_config(data, path=Path("<test>"))
     assert "worker.noise_subject_patterns" in exc_info.value.message
     assert "[unclosed" in exc_info.value.message
-
-
-def test_negative_budget_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"budget_usd": -1}, path=Path("<test>"))
-    assert "budget_usd" in exc_info.value.message
-
-    data = {"repos": [{"name": "project-a", "url": "git@x:a.git", "budget_usd": -0.1}]}
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config(data, path=Path("<test>"))
-    assert "repos[0].budget_usd" in exc_info.value.message
-
-
-def test_budget_none_allowed() -> None:
-    cfg = parse_config({"budget_usd": None}, path=Path("<test>"))
-    assert cfg.budget_usd is None
 
 
 def test_zero_timeout_errors() -> None:
@@ -371,17 +352,6 @@ def test_unknown_keys_with_mixed_types_warns() -> None:
     assert cfg == Config()
 
 
-def test_non_number_budget_errors() -> None:
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"budget_usd": True}, path=Path("<test>"))
-    assert "budget_usd" in exc_info.value.message
-    assert "number" in exc_info.value.message
-
-    with pytest.raises(ConfigError) as exc_info:
-        parse_config({"budget_usd": "free"}, path=Path("<test>"))
-    assert "budget_usd" in exc_info.value.message
-
-
 # ---------------------------------------------------------------------------
 # ProgressConfig tests
 # ---------------------------------------------------------------------------
@@ -504,3 +474,24 @@ def test_legacy_raw_auto_ingest_is_unknown_key() -> None:
     assert len(recording.warnings) == 1
     assert "raw_auto_ingest" in recording.warnings[0]
     assert cfg == Config()
+
+
+def test_legacy_top_level_budget_usd_is_unknown_key() -> None:
+    recording = _RecordingLogger()
+    data: dict[str, object] = {"budget_usd": 0.5}
+    cfg = parse_config(data, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "budget_usd" in recording.warnings[0]
+    assert cfg == Config()
+    assert hasattr(cfg, "budget_usd") is False
+
+
+def test_legacy_repo_budget_usd_is_unknown_key() -> None:
+    recording = _RecordingLogger()
+    data = {"repos": [{"name": "project-a", "url": "git@x:a.git", "budget_usd": 0.5}]}
+    cfg = parse_config(data, path=Path("<test>"), logger=recording)
+    assert len(recording.warnings) == 1
+    assert "repos[0]" in recording.warnings[0]
+    assert "budget_usd" in recording.warnings[0]
+    assert cfg == Config(repos=(RepoConfig(name="project-a", url="git@x:a.git"),))
+    assert hasattr(cfg.repos[0], "budget_usd") is False

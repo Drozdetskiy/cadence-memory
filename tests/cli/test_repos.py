@@ -141,8 +141,6 @@ def test_cli_add_optional_flags_thread_through(tmp_path: Path) -> None:
             "abc123",
             "--model",
             "claude-opus-4-7",
-            "--budget",
-            "1.25",
             "--wiki",
             str(tmp_path),
         ],
@@ -158,7 +156,6 @@ def test_cli_add_optional_flags_thread_through(tmp_path: Path) -> None:
     assert repo["branch"] == "dev"
     assert repo["start_commit"] == "abc123"
     assert repo["model"] == "claude-opus-4-7"
-    assert repo["budget_usd"] == 1.25
 
 
 def test_cli_no_wiki_found_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

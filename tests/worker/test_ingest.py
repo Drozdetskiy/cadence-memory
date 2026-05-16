@@ -202,7 +202,6 @@ def _repo_cfg(**overrides: object) -> RepoConfig:
 def _config(**overrides: object) -> Config:
     base: dict[str, object] = {
         "model": "claude-sonnet-4-6",
-        "budget_usd": 0.5,
         "idle_timeout_s": 300,
         "worker": WorkerConfig(),
         "repos": (),
@@ -524,25 +523,6 @@ def test_per_repo_model_override(tmp_path: Path) -> None:
 
     assert runner.calls[0].model == "claude-opus-4-7"
     assert runner.calls[0].allowed_tools == WIKI_READWRITE
-
-
-def test_budget_usd_in_config_does_not_affect_runner(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    runner = _FakeClaudeRunner()
-    cache = _FakeGitCache()
-
-    ingest_event(
-        event=_single_event(),
-        repo_cfg=_repo_cfg(budget_usd=1.25),
-        config=_config(budget_usd=0.5),
-        wiki_dir=wiki,
-        runner=runner,
-        cache=cache,
-        clock=_fixed_clock(),
-    )
-
-    assert len(runner.calls) == 1
-    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
 
 
 def test_noise_batch_event_uses_aggregated_subject(tmp_path: Path) -> None:

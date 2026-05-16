@@ -25,7 +25,6 @@ REPO_KEY_ORDER: tuple[str, ...] = (
     "branch",
     "start_commit",
     "model",
-    "budget_usd",
 )
 
 
@@ -89,7 +88,6 @@ def _build_repo_entry(
     branch: str,
     start_commit: str | None,
     model: str | None,
-    budget_usd: float | None,
 ) -> Any:
     fields: dict[str, Any] = {
         "name": name,
@@ -97,7 +95,6 @@ def _build_repo_entry(
         "branch": branch,
         "start_commit": start_commit,
         "model": model,
-        "budget_usd": budget_usd,
     }
     entry = CommentedMap()
     for key in REPO_KEY_ORDER:
@@ -118,7 +115,6 @@ def add_repo(
     branch: str = "main",
     start_commit: str | None = None,
     model: str | None = None,
-    budget_usd: float | None = None,
     logger: Logger = _NULL_LOGGER,
 ) -> None:
     """Append a new repo entry to `config.yaml` in-place.
@@ -147,7 +143,6 @@ def add_repo(
         branch=branch,
         start_commit=start_commit,
         model=model,
-        budget_usd=budget_usd,
     )
     repos.append(entry)
     _validate_pending_doc(doc, config_path)

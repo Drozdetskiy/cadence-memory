@@ -29,7 +29,6 @@ def test_config_fields_present() -> None:
     names = {f.name for f in dataclasses.fields(Config)}
     assert names == {
         "model",
-        "budget_usd",
         "idle_timeout_s",
         "worker",
         "repos",
@@ -45,7 +44,6 @@ def test_repoconfig_fields_present() -> None:
         "branch",
         "start_commit",
         "model",
-        "budget_usd",
     }
 
 
@@ -63,7 +61,6 @@ def test_workerconfig_fields_present() -> None:
 def test_config_defaults() -> None:
     cfg = Config()
     assert cfg.model == "claude-sonnet-4-6"
-    assert cfg.budget_usd == 0.50
     assert cfg.idle_timeout_s == 300
     assert cfg.worker == WorkerConfig()
     assert cfg.repos == ()
@@ -84,7 +81,6 @@ def test_repoconfig_defaults() -> None:
     assert r.branch == "main"
     assert r.start_commit is None
     assert r.model is None
-    assert r.budget_usd is None
 
 
 def test_config_is_immutable() -> None:

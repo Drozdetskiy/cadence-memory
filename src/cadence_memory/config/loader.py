@@ -16,9 +16,7 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 _NULL_LOGGER: Logger = NullLogger()
 
-ALLOWED_TOP_KEYS = frozenset(
-    {"model", "budget_usd", "idle_timeout_s", "worker", "repos", "progress"}
-)
+ALLOWED_TOP_KEYS = frozenset({"model", "idle_timeout_s", "worker", "repos", "progress"})
 ALLOWED_PROGRESS_KEYS = frozenset({"jsonl", "jsonl_path", "color", "level"})
 _VALID_COLORS = frozenset({"auto", "always", "never"})
 _VALID_LEVELS = frozenset({"debug", "info", "warn", "error"})
@@ -31,7 +29,7 @@ ALLOWED_WORKER_KEYS = frozenset(
         "stop_on_failure",
     }
 )
-ALLOWED_REPO_KEYS = frozenset({"name", "url", "branch", "start_commit", "model", "budget_usd"})
+ALLOWED_REPO_KEYS = frozenset({"name", "url", "branch", "start_commit", "model"})
 
 
 def load_config(path: Path, *, logger: Logger = _NULL_LOGGER) -> Config:
@@ -59,7 +57,6 @@ def parse_config(data: dict[str, object], *, path: Path, logger: Logger = _NULL_
         logger.warn("%s: unknown key %r (ignored)", str(path), key)
 
     model = _require_nonempty_str(data.get("model", "claude-sonnet-4-6"), "model", path)
-    budget_usd = _parse_optional_budget(data.get("budget_usd", 0.50), "budget_usd", path)
     idle_timeout_s = _require_positive_int(data.get("idle_timeout_s", 300), "idle_timeout_s", path)
     worker = _parse_worker(data.get("worker"), path, logger=logger)
     repos = _parse_repos(data.get("repos"), path, logger=logger)
@@ -67,7 +64,6 @@ def parse_config(data: dict[str, object], *, path: Path, logger: Logger = _NULL_
 
     return Config(
         model=model,
-        budget_usd=budget_usd,
         idle_timeout_s=idle_timeout_s,
         worker=worker,
         repos=repos,
@@ -196,7 +192,6 @@ def _parse_repo(
         entry.get("start_commit"), f"repos[{i}].start_commit", path
     )
     model = _parse_optional_nonempty_str(entry.get("model"), f"repos[{i}].model", path)
-    budget_usd = _parse_optional_budget(entry.get("budget_usd"), f"repos[{i}].budget_usd", path)
 
     return RepoConfig(
         name=name_raw,
@@ -204,7 +199,6 @@ def _parse_repo(
         branch=branch_raw,
         start_commit=start_commit,
         model=model,
-        budget_usd=budget_usd,
     )
 
 
@@ -234,17 +228,6 @@ def _require_bool(value: object, key: str, path: Path) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(path, f"{key}: must be a boolean")
     return value
-
-
-def _parse_optional_budget(value: object, key: str, path: Path) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(path, f"{key}: must be a number or null")
-    coerced = float(value)
-    if coerced < 0:
-        raise ConfigError(path, f"{key}: must be >= 0")
-    return coerced
 
 
 def _parse_regex_list(value: object, key: str, path: Path) -> tuple[str, ...]:

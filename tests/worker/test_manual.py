@@ -167,7 +167,6 @@ def _init_wiki(tmp_path: Path) -> Path:
 def _config(**overrides: object) -> Config:
     base: dict[str, object] = {
         "model": "claude-sonnet-4-6",
-        "budget_usd": 0.5,
         "idle_timeout_s": 300,
         "worker": WorkerConfig(),
         "repos": (),
@@ -314,7 +313,7 @@ def test_runner_called_with_config_defaults(tmp_path: Path) -> None:
 
     ingest_file(
         source_path=src,
-        config=_config(model="claude-opus-4-7", budget_usd=1.5, idle_timeout_s=600),
+        config=_config(model="claude-opus-4-7", idle_timeout_s=600),
         wiki_dir=wiki,
         runner=runner,
         clock=_fixed_clock(),
@@ -625,23 +624,6 @@ def test_commit_message_uses_basename(tmp_path: Path) -> None:
     subject_line = _git("log", "-1", "--format=%s", cwd=wiki).stdout.strip()
     assert subject_line == "cadence-memory: ingest-manual 2026-05-12-meeting.md"
     assert str(raw_dir) not in subject_line
-
-
-def test_manual_budget_usd_config_not_forwarded_to_runner(tmp_path: Path) -> None:
-    wiki = _init_wiki(tmp_path)
-    src = _write_source(tmp_path)
-    runner = _FakeClaudeRunner()
-
-    ingest_file(
-        source_path=src,
-        config=_config(budget_usd=0.5),
-        wiki_dir=wiki,
-        runner=runner,
-        clock=_fixed_clock(),
-    )
-
-    assert len(runner.calls) == 1
-    assert all("budget_usd" not in kw for kw in runner.extra_kwargs)
 
 
 def test_manual_emits_phase_start_and_end_events(tmp_path: Path) -> None:
