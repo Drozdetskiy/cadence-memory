@@ -14,6 +14,7 @@ from cadence_memory.progress.events import (
     ProgressEvent,
     StageEndEvent,
     StageStartEvent,
+    WikiDirtyPreflightEvent,
     now_ts,
 )
 
@@ -193,6 +194,29 @@ def test_error_event_no_detail() -> None:
     assert d["detail"] is None
 
 
+def test_wiki_dirty_preflight_event_proceeded() -> None:
+    e = WikiDirtyPreflightEvent(paths=("a.md", "b/c.md"), proceeded=True)
+    d = e.to_jsonl_dict()
+    assert d["event"] == "wiki_dirty_preflight"
+    assert d["paths"] == ["a.md", "b/c.md"]
+    assert d["proceeded"] is True
+    assert "ts" in d
+
+
+def test_wiki_dirty_preflight_event_aborted() -> None:
+    e = WikiDirtyPreflightEvent(paths=("x.md",), proceeded=False)
+    d = e.to_jsonl_dict()
+    assert d["event"] == "wiki_dirty_preflight"
+    assert d["paths"] == ["x.md"]
+    assert d["proceeded"] is False
+
+
+def test_wiki_dirty_preflight_paths_serialized_as_list() -> None:
+    e = WikiDirtyPreflightEvent(paths=("only.md",), proceeded=True)
+    d = e.to_jsonl_dict()
+    assert isinstance(d["paths"], list)
+
+
 def test_all_events_have_ts_field() -> None:
     events: list[ProgressEvent] = [
         PhaseStartEvent(phase="bootstrap"),
@@ -202,9 +226,10 @@ def test_all_events_have_ts_field() -> None:
         IngestStartEvent(repo="x", commit_sha="abc", subject="fix"),
         IngestEndEvent(repo="x", commit_sha="abc"),
         ClaudeProgressEvent(phase="claude", kind="tool-call"),
+        WikiDirtyPreflightEvent(paths=("a.md",), proceeded=True),
         ErrorEvent(phase="ingest", message="fail"),
     ]
-    assert len(events) == 8
+    assert len(events) == 9
     for ev in events:
         d = ev.to_jsonl_dict()
         ts = d["ts"]

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.3 — 2026-05-23
+
+### New
+- `cadence-memory worker run` now performs a pre-flight check on the wiki working tree before its first ingest: if there are uncommitted or untracked changes, it logs the dirty paths and proceeds by default. With `--strict`, it instead aborts before ingest with exit code 2 so the dirty state is never folded into a worker commit.
+
 ## v0.5.2 — 2026-05-16
 
 ### Removed
