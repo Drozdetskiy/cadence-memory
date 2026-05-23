@@ -13,6 +13,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from cadence_memory.executor.claude_cli import build_claude_argv, build_claude_env
 from cadence_memory.executor.events import (
     AssistantTextEvent,
     ResultEvent,
@@ -206,27 +207,17 @@ class StreamingClaudeRunner:
         allowed_tools: tuple[str, ...],
         extra_args: tuple[str, ...],
     ) -> list[str]:
-        argv: list[str] = [
-            self._claude_command,
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--input-format",
-            "stream-json",
-            "--model",
-            model,
-        ]
-        if allowed_tools:
-            argv.extend(["--allowedTools", ",".join(allowed_tools)])
-        argv.extend(extra_args)
-        return argv
+        return list(
+            build_claude_argv(
+                self._claude_command,
+                model=model,
+                allowed_tools=allowed_tools,
+                extra_args=extra_args,
+            )
+        )
 
     def _build_env(self) -> dict[str, str]:
-        env: dict[str, str] = dict(os.environ)
-        env.pop("CLAUDECODE", None)
-        env.update(self._env_overrides)
-        return env
+        return build_claude_env(os.environ, overrides=self._env_overrides)
 
     def _launch_process(
         self,
