@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.4 — 2026-05-24
+
+### Other
+- The set of flags and environment variables passed to the `claude` subprocess is now localized in a single module and pinned by a contract test, so a future upstream Claude Code CLI change fails CI on a clear assertion instead of breaking a live ingest. No user-visible behavior change.
+
 ## v0.5.3 — 2026-05-23
 
 ### New
