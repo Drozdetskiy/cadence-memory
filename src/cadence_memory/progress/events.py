@@ -156,6 +156,20 @@ class ClaudeProgressEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class WikiDirtyPreflightEvent:
+    paths: tuple[str, ...]
+    proceeded: bool
+
+    def to_jsonl_dict(self) -> dict[str, object]:
+        return {
+            "ts": now_ts(),
+            "event": "wiki_dirty_preflight",
+            "paths": list(self.paths),
+            "proceeded": self.proceeded,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ErrorEvent:
     phase: str
     message: str
@@ -179,6 +193,7 @@ ProgressEvent = (
     | IngestStartEvent
     | IngestEndEvent
     | ClaudeProgressEvent
+    | WikiDirtyPreflightEvent
     | ErrorEvent
 )
 
@@ -193,5 +208,6 @@ __all__ = [
     "ProgressEvent",
     "StageEndEvent",
     "StageStartEvent",
+    "WikiDirtyPreflightEvent",
     "now_ts",
 ]

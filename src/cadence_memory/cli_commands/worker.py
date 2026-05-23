@@ -21,7 +21,7 @@ from cadence_memory.wiki.locator import CONFIG_FILENAME, resolve_wiki_dir
 from cadence_memory.worker.bootstrap import run_bootstrap
 from cadence_memory.worker.daemon import DaemonSignals, run_daemon
 from cadence_memory.worker.lock import WorkerBusyError, worker_lock
-from cadence_memory.worker.run import run_pending
+from cadence_memory.worker.run import WikiDirtyError, run_pending
 from cadence_memory.worker.state import StateError, load_state, save_state, update_repo
 
 worker_app = typer.Typer(
@@ -72,8 +72,10 @@ def cmd_run(
         typer.Option(
             "--strict",
             help=(
-                "Bootstrap mode: leave last_sha unchanged when any stage failed "
-                "(default advances to HEAD even on partial failure)."
+                "Commits mode: abort with exit 2 if the wiki working tree is dirty "
+                "before ingest (default warns and proceeds). Bootstrap mode: leave "
+                "last_sha unchanged when any stage failed (default advances to HEAD "
+                "even on partial failure)."
             ),
         ),
     ] = False,
@@ -178,10 +180,13 @@ def cmd_run(
                 only_repo=only,
                 limit=limit,
                 dry_run=dry_run,
+                strict_clean=strict,
                 logger=logger,
             )
     except WorkerBusyError as exc:
         _fail(str(exc))
+    except WikiDirtyError as exc:
+        _fail(str(exc), code=2)
 
     logger.print(
         "processed %d, failed %d, $%.2f",

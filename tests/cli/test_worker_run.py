@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,16 @@ def _scaffold_with_color(tmp_path: Path) -> Path:
     _scaffold(tmp_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_path.read_text() + "progress:\n  color: always\n")
+    return tmp_path
+
+
+def _scaffold_committed(tmp_path: Path) -> Path:
+    """Scaffold a wiki with no repos and commit it so the working tree is clean."""
+    scaffold_wiki(tmp_path)
+    for arg in (("user.email", "test@example.com"), ("user.name", "Test User")):
+        subprocess.run(["git", "config", *arg], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=tmp_path, check=True, capture_output=True)
     return tmp_path
 
 
@@ -296,3 +307,42 @@ def test_cli_run_quiet_suppresses_info(tmp_path: Path, monkeypatch: pytest.Monke
     assert result_quiet.exit_code == 0, result_quiet.stdout + result_quiet.stderr
     assert "starting worker run" not in result_quiet.stdout
     assert "processed 1" in result_quiet.stdout
+
+
+def test_cli_run_strict_dirty_wiki_exits_2(tmp_path: Path) -> None:
+    _scaffold_committed(tmp_path)
+    (tmp_path / "index.md").write_text("dirty edit\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["worker", "run", "--strict", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 2, result.stdout + result.stderr
+    assert "index.md" in result.stderr
+    assert "aborting" in result.stderr
+    # strict abort happens before any ingest, so no summary line is printed.
+    assert "processed" not in result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_run_dirty_wiki_default_proceeds(tmp_path: Path) -> None:
+    _scaffold_committed(tmp_path)
+    (tmp_path / "index.md").write_text("dirty edit\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["worker", "run", "--wiki", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "index.md" in result.stdout
+    assert "proceeding" in result.stdout
+    assert "processed 0" in result.stdout
+
+
+def test_cli_run_help_mentions_strict_preflight() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["worker", "run", "--help"])
+
+    assert result.exit_code == 0, result.stdout
+    plain = strip_ansi(result.stdout)
+    assert "--strict" in plain
+    assert "dirty" in plain

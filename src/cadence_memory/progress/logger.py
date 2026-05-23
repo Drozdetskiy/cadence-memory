@@ -17,6 +17,7 @@ from cadence_memory.progress.events import (
     ProgressEvent,
     StageEndEvent,
     StageStartEvent,
+    WikiDirtyPreflightEvent,
     now_ts,
 )
 
@@ -88,6 +89,10 @@ def _format_event_summary(event: ProgressEvent) -> str:
     elif isinstance(event, ClaudeProgressEvent):
         detail = f": {event.detail}" if event.detail else ""
         return f"[{event.phase}] {event.kind}{detail}"
+    elif isinstance(event, WikiDirtyPreflightEvent):
+        joined = ", ".join(event.paths)
+        outcome = "proceeding" if event.proceeded else "aborting (--strict)"
+        return f"wiki working tree dirty ({len(event.paths)} path(s)): {joined} — {outcome}"
     elif isinstance(event, ErrorEvent):
         detail = f" ({event.detail})" if event.detail else ""
         return f"error in {event.phase}: {event.message}{detail}"

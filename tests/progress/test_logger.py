@@ -18,6 +18,7 @@ from cadence_memory.progress.events import (
     PhaseStartEvent,
     StageEndEvent,
     StageStartEvent,
+    WikiDirtyPreflightEvent,
 )
 from cadence_memory.progress.logger import Logger, NullLogger, StdoutLogger, _format_event_summary
 
@@ -108,6 +109,26 @@ def test_format_error_with_detail() -> None:
 def test_format_error_no_detail() -> None:
     e = ErrorEvent(phase="ingest", message="claude failed")
     assert _format_event_summary(e) == "error in ingest: claude failed"
+
+
+def test_format_wiki_dirty_preflight_proceeding() -> None:
+    e = WikiDirtyPreflightEvent(paths=("a.md", "b/c.md"), proceeded=True)
+    s = _format_event_summary(e)
+    assert "wiki working tree dirty" in s
+    assert "2 path(s)" in s
+    assert "a.md" in s
+    assert "b/c.md" in s
+    assert "proceeding" in s
+    assert "aborting" not in s
+
+
+def test_format_wiki_dirty_preflight_aborting() -> None:
+    e = WikiDirtyPreflightEvent(paths=("x.md",), proceeded=False)
+    s = _format_event_summary(e)
+    assert "wiki working tree dirty" in s
+    assert "1 path(s)" in s
+    assert "x.md" in s
+    assert "aborting (--strict)" in s
 
 
 # --- StdoutLogger: stdout format ---

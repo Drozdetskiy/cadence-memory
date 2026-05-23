@@ -18,7 +18,11 @@ from cadence_memory.git.walker import (
     event_head_sha,
     iter_pending_commits,
 )
-from cadence_memory.progress.events import PhaseEndEvent, PhaseStartEvent
+from cadence_memory.progress.events import (
+    PhaseEndEvent,
+    PhaseStartEvent,
+    WikiDirtyPreflightEvent,
+)
 from cadence_memory.progress.logger import Logger, NullLogger
 from cadence_memory.worker.ingest import ingest_event
 from cadence_memory.worker.log_rotate import LogRotationError, RotateOutcome, rotate_log
@@ -28,11 +32,20 @@ from cadence_memory.worker.state import (
     save_state,
     update_repo,
 )
+from cadence_memory.worker.wiki_commit import list_touched_paths
 
 _NULL_LOGGER: Logger = NullLogger()
 
 _SUBJECT_MAX = 72
 _STATE_RELPATH = Path(".cadence-memory") / "state.json"
+
+
+class WikiDirtyError(Exception):
+    """Raised when a strict run aborts because the wiki working tree is dirty."""
+
+    def __init__(self, paths: tuple[str, ...], message: str) -> None:
+        super().__init__(message)
+        self.paths = paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +86,24 @@ def run_pending(
     only_repo: str | None = None,
     limit: int | None = None,
     dry_run: bool = False,
+    strict_clean: bool = False,
     clock: Callable[[], datetime] = _utc_now,
     logger: Logger = _NULL_LOGGER,
     should_stop_between_repos: Callable[[], bool] | None = None,
     should_stop_between_events: Callable[[], bool] | None = None,
 ) -> tuple[WorkerState, RunSummary]:
     state_path = wiki_dir / _STATE_RELPATH
+
+    wiki_root = wiki_dir.resolve()
+    touched = list_touched_paths(wiki_dir)
+    if touched:
+        rel = tuple(sorted(str(p.relative_to(wiki_root)) for p in touched))
+        logger.log_event(WikiDirtyPreflightEvent(paths=rel, proceeded=not strict_clean))
+        if strict_clean:
+            raise WikiDirtyError(
+                rel,
+                f"wiki working tree is dirty before ingest: {', '.join(rel)} — aborting (--strict)",
+            )
 
     events_processed = 0
     events_failed = 0
@@ -247,4 +272,4 @@ def run_pending(
     return state, summary
 
 
-__all__ = ["RunSummary", "run_pending"]
+__all__ = ["RunSummary", "WikiDirtyError", "run_pending"]
