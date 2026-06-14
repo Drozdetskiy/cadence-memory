@@ -11,6 +11,10 @@ from cadence_memory.wiki import scaffold_wiki
 _SKILL_PATHS: tuple[str, ...] = (
     ".claude/skills/wiki-researcher/SKILL.md",
     ".claude/skills/wiki-ingest/SKILL.md",
+    ".claude/skills/wiki-research/SKILL.md",
+    ".claude/skills/wiki-sync/SKILL.md",
+    ".claude/skills/wiki-synthesize/SKILL.md",
+    ".claude/skills/wiki-distill/SKILL.md",
 )
 
 

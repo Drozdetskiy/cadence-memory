@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.0 — 2026-06-14
+
+### New
+- Four new default Claude Code skills are scaffolded into every wiki by `cadence-memory init`, alongside the existing `wiki-ingest` and `wiki-researcher`:
+  - **`wiki-research`** — turns a free-form research brief into verified, sourced wiki pages by running a background multi-agent pipeline (parallel research facets → synthesize → independent fact-check → persist to `raw/notes/`) and then ingesting each note. Ships a copy-pasteable Workflow template.
+  - **`wiki-sync`** — drains the `raw/notes/` drop-zone: ingests every pending note, hand-folds any note the ingest pass judges redundant ("no changes") into a validated page, updates `index.md` and `log.md`, optionally lints, then commits and pushes.
+  - **`wiki-synthesize`** — generates or refreshes a top-level capstone page (verdict/thesis + open decisions + a criteria checklist) that consolidates the wiki's scattered conclusions into one actionable page.
+  - **`wiki-distill`** — populates the cross-project `decisions.md` / `patterns.md` / `learnings.md` root pages from recurring findings across existing pages (decisions made, patterns seen in 2+ pages, hard-won gotchas).
+- The skills bake in the frontmatter contract (`confidence` is `high|medium|low` only; `created`/`updated` are `YYYY-MM-DD` dates) and the hand-fold fallback for synthesis notes that ingest no-ops, validated against the installed `parse_page` frontmatter parser.
+
 ## v0.5.4 — 2026-05-24
 
 ### Other
